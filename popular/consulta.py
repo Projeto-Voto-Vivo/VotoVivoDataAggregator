@@ -1,5 +1,9 @@
 import mysql.connector
 import sys 
+import os  
+from dotenv import load_dotenv 
+
+load_dotenv()
 
 class ServicoDeputado:
     """
@@ -9,10 +13,10 @@ class ServicoDeputado:
         
         try:
             self.conn = mysql.connector.connect(
-                host=host,
-                user=user,
-                password=password,
-                database=database
+                host=os.getenv("DB_HOST", host),
+                user=os.getenv("DB_USER", user),
+                password=os.getenv("DB_PASSWORD", password),
+                database=os.getenv("DB_NAME", database)
             )
             self.cursor = self.conn.cursor(dictionary=True, buffered=True) 
             print(" Conexão MySQL estabelecida no ServicoDeputado.")
