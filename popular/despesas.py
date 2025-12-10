@@ -1,29 +1,25 @@
 import requests
 import mysql.connector
 import time
-import sys # Importa sys para sair do script em caso de erro fatal
+import sys 
 
-# =================================================================
-## Configuração do Banco de Dados
-# =================================================================
+
 try:
     db = mysql.connector.connect(
         host="localhost",
         user="root",
-        password="06131418",
+        password="",
         database="votovivo"
     )
     cursor = db.cursor()
     print("Conexão com o banco de dados estabelecida.")
 except mysql.connector.Error as err:
     print(f"Erro ao conectar ao MySQL: {err}")
-    sys.exit(1) # Sai do script se não puder conectar
+    sys.exit(1)
 
-# =================================================================
-## Busca de Deputados no Banco
-# =================================================================
+
 try:
-    # Busca todos os idDeputado da tabela Deputado (CORRIGIDO: Dentro do bloco try)
+
     cursor.execute("SELECT idDeputado FROM Deputado")
     deputados_db = cursor.fetchall()
 except mysql.connector.Error as err:

@@ -5,7 +5,7 @@ class ServicoDeputado:
     """
     Classe de serviço para executar consultas relacionadas a Deputados.
     """
-    def __init__(self, host="localhost", user="root", password="06131418", database="votovivo"):
+    def __init__(self, host="localhost", user="root", password="", database="votovivo"):
         
         try:
             self.conn = mysql.connector.connect(
@@ -15,9 +15,9 @@ class ServicoDeputado:
                 database=database
             )
             self.cursor = self.conn.cursor(dictionary=True, buffered=True) 
-            print("✅ Conexão MySQL estabelecida no ServicoDeputado.")
+            print(" Conexão MySQL estabelecida no ServicoDeputado.")
         except mysql.connector.Error as err:
-            print(f"❌ Erro ao conectar ao MySQL: {err}")
+            print(f" Erro ao conectar ao MySQL: {err}")
             self.conn = None
             self.cursor = None
             sys.exit(1)
@@ -135,12 +135,10 @@ class ServicoDeputado:
         """
         return self._executar_select(sql, (id_deputado, ano, mes))
 
-# =================================================================
-## BLOCO DE EXECUÇÃO DE TESTE (CORRIGIDO)
-# =================================================================
+
 if __name__ == "__main__":
     
-    # ID de teste que você forneceu:
+   
     ID_TESTE = 62881 
     
     servico = ServicoDeputado()
@@ -155,7 +153,7 @@ if __name__ == "__main__":
             detalhes = servico.obter_detalhes_basicos(ID_TESTE)
             print("\n--- 1. DETALHES BÁSICOS E ATUAIS ---")
             if detalhes:
-                # CORREÇÃO 1: Removendo o teste de 'detalhes.get('nomeParlamentar')'
+                
                 print(f"Nome Parlamentar: {detalhes.get('nomeParlamentar')}") 
                 print(f"Partido Atual: {detalhes.get('siglaPartido')}")
                 print(f"Telefone Gabinete: {detalhes.get('telefone')}")
@@ -172,7 +170,7 @@ if __name__ == "__main__":
             redes = servico.obter_redes_sociais(ID_TESTE)
             print("\n--- 2B. REDES SOCIAIS ---")
             if redes:
-                # A função obter_redes_sociais retorna uma lista de dicionários
+                
                 for rede in redes:
                     print(f"  - {rede.get('linkRedeSocial')}")
             else:
@@ -186,7 +184,7 @@ if __name__ == "__main__":
             if despesas:
                 print(f"Total de Despesas encontradas: {len(despesas)}")
                 
-                # CORREÇÃO 2: Exibindo até 5 despesas (ou menos, se houver)
+               
                 print("\nÚltimas Despesas:")
                 for i, despesa in enumerate(despesas[:]):
                     print(f"  {i+1}. Tipo: {despesa.get('tipoDespesa')}, Valor Líquido: R$ {despesa.get('valorLiquido')}, Fornecedor: {despesa.get('nomeFornecedor')}")
