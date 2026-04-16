@@ -1,152 +1,137 @@
 import requests
 import mysql.connector
 import time
-import sys 
-import os  
-from dotenv import load_dotenv 
+import os
+from dotenv import load_dotenv
 
 load_dotenv()
 
-try:
-    db = mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votovivo")
-    )
-    cursor = db.cursor()
-    print("Conexão com o banco de dados estabelecida.")
-except mysql.connector.Error as err:
-    print(f"Erro ao conectar ao MySQL: {err}")
-    sys.exit(1)
+# CONEXÃO
+db = mysql.connector.connect(
+    host=os.getenv("DB_HOST", "localhost"),
+    user=os.getenv("DB_USER", "root"),
+    password=os.getenv("DB_PASSWORD", ""),
+    database=os.getenv("DB_NAME", "votoVivo")
+)
+cursor = db.cursor()
+
+print("Conectado.\n")
 
 
-try:
-
-    cursor.execute("SELECT idDeputado FROM Deputado")
-    deputados_db = cursor.fetchall()
-except mysql.connector.Error as err:
-    print(f"Erro ao buscar deputados: {err}")
-    cursor.close()
-    db.close()
-    sys.exit(1)
-
-print(f"Total de deputados no banco: {len(deputados_db)}")
-print("Iniciando importação de despesas...\n")
+ANO = 2025
+MESES = [7, 8, 9]
 
 
-ANO_INICIAL = 2025
-ANO_FINAL = 2025
-MES_INICIAL = 9
-MES_FINAL = 11
+cursor.execute("""
+    SELECT idApi, idParlamentar, cargo
+    FROM parlamentar
+    WHERE cargo IN ('Deputado Federal', 'Senador')
+""")
+parlamentares = cursor.fetchall()
 
-total_despesas = 0
-deputados_processados = 0
+print(f"Total parlamentares: {len(parlamentares)}\n")
 
 
-for (id_deputado,) in deputados_db:
-    despesas_deputado = 0
+def despesas_deputado(id_api):
+    url = f"https://dadosabertos.camara.leg.br/api/v2/deputados/{id_api}/despesas"
+    resultado = []
 
-    for ano in range(ANO_INICIAL, ANO_FINAL + 1):
-        for mes in range(MES_INICIAL, MES_FINAL + 1):
+    for mes in MESES:
+        pagina = 1
 
-            
-            url = f"https://dadosabertos.camara.leg.br/api/v2/deputados/{id_deputado}/despesas"
+        while True:
             params = {
-                "ano": ano,
+                "ano": ANO,
                 "mes": mes,
                 "itens": 100,
-                "ordem": "ASC",
-                "ordenarPor": "dataDocumento"
+                "pagina": pagina
             }
 
-            pagina = 1
+            r = requests.get(url, params=params)
 
-            while True:
-                params["pagina"] = pagina
+            if r.status_code != 200:
+                break
 
-                try:
-                    response = requests.get(url, params=params)
+            data = r.json()
+            dados = data.get("dados", [])
 
-                    if response.status_code == 200:
-                        json_response = response.json()
-                        dados = json_response["dados"]
+            if not dados:
+                break
 
-                        if not dados:
-                            break  
+            resultado.extend(dados)
 
-                        
-                        valores_a_inserir = []
-                        for despesa in dados:
-                           
-                            valores = (
-                                id_deputado,
-                                despesa.get('ano'),
-                                despesa.get('cnpjCpfFornecedor'),
-                                despesa.get('codDocumento'),
-                                despesa.get('codLote'),
-                                despesa.get('codTipoDocumento'),
-                                despesa.get('dataDocumento'),
-                                despesa.get('mes'),
-                                despesa.get('nomeFornecedor'),
-                                despesa.get('numDocumento'),
-                                despesa.get('numRessarcimento'),
-                                despesa.get('parcela'),
-                                despesa.get('tipoDespesa'),
-                                despesa.get('tipoDocumento'),
-                                despesa.get('urlDocumento'),
-                                despesa.get('valorDocumento'),
-                                despesa.get('valorGlosa'),
-                                despesa.get('valorLiquido')
-                            )
-                            valores_a_inserir.append(valores)
+            if not any(l["rel"] == "next" for l in data.get("links", [])):
+                break
 
-                        sql = """
-                            INSERT IGNORE INTO Despesa
-                            (idDeputado, ano, cnpjCpfFornecedor, codDocumento, codLote,
-                            codTipoDocumento, dataDocumento, mes, nomeFornecedor, numDocumento,
-                            numRessarcimento, parcela, tipoDespesa, tipoDocumento,
-                            urlDocumento, valorDocumento, valorGlosa, valorLiquido)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                        """
-                        cursor.executemany(sql, valores_a_inserir)
+            pagina += 1
+            time.sleep(0.05)
 
-                        despesas_deputado += len(dados)
-                        total_despesas += len(dados)
-
-                       
-                        links = {link['rel']: link['href'] for link in json_response.get('links', [])}
-                        if 'next' not in links:
-                            break 
-                        pagina += 1
-                        time.sleep(0.05) 
-
-                    else:
-                        print(f"Erro ao buscar despesas do deputado {id_deputado} ({ano}/{mes}): Status {response.status_code}")
-                        break
-
-                except Exception as e:
-                    print(f"Erro ao processar deputado {id_deputado} ({ano}/{mes}): {e}")
-                    break
-
-            time.sleep(0.05) 
-
-    db.commit()
-
-    deputados_processados += 1
-
-    if despesas_deputado > 0:
-        print(f"Deputado ID {id_deputado}: {despesas_deputado} despesa(s) importada(s)")
-
-    if deputados_processados % 10 == 0:
-        print(f"    Progresso: {deputados_processados}/{len(deputados_db)} deputados processados")
+    return resultado
 
 
-print("\n" + "="*80)
-print(f"Importação concluída!")
-print(f"    • Deputados processados: {deputados_processados}")
-print(f"    • Total de despesas importadas: {total_despesas}")
-print("="*80)
+def despesas_senador(id_api):
+    url = f"https://legis.senado.leg.br/dadosabertos/senador/{id_api}/despesas"
+    try:
+        r = requests.get(url, headers={"Accept": "application/json"}, timeout=10)
+
+        if r.status_code != 200:
+            return []
+
+        data = r.json()
+
+       
+        lista = data.get("ListaDespesasSenador", {}).get("Despesas", {}).get("Despesa", [])
+
+        return lista
+
+    except:
+        return []
+
+
+total = 0
+
+for id_api, id_parlamentar, cargo in parlamentares:
+
+    if cargo == "Deputado Federal":
+        despesas = despesas_deputado(id_api)
+
+        valores = []
+        for d in despesas:
+            valores.append((
+                id_parlamentar,
+                d.get("dataDocumento"),
+                d.get("valorLiquido"),
+                d.get("nomeFornecedor"),
+                d.get("cnpjCpfFornecedor"),
+                d.get("urlDocumento"),
+                d.get("tipoDespesa")
+            ))
+
+        if valores:
+            cursor.executemany("""
+                INSERT INTO despesa
+                (idParlamentar, dataDespesa, valor, fornecedorNome,
+                 fornecedorCnpjCpf, notaFiscalUrl, categoria)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
+            """, valores)
+
+            db.commit()
+
+        print(f"Deputado {id_api}: {len(valores)} despesas")
+
+        total += len(valores)
+
+    elif cargo == "Senador":
+        despesas = despesas_senador(id_api)
+
+        print(f"Senador {id_api}: {len(despesas)} despesas ")
+
+    time.sleep(0.1)
+
+
+print("\n==========================")
+print(f"TOTAL INSERIDO: {total}")
+print("==========================")
 
 cursor.close()
 db.close()

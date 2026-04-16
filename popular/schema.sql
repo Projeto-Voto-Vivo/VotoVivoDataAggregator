@@ -1,88 +1,113 @@
-CREATE DATABASE IF NOT EXISTS votovivo;
-USE votovivo;
+CREATE DATABASE IF NOT EXISTS votoVivo;
+USE votoVivo;
 
-CREATE TABLE IF NOT EXISTS Deputado (
-    idDeputado      INT PRIMARY KEY,
-    nomeCivil        VARCHAR(200) NOT NULL,
-    cpf              VARCHAR(14)  UNIQUE,
-    sexo             CHAR(1),
-    dataNascimento   DATE,
-    ufNascimento     CHAR(2),
-    municipioNascimento VARCHAR(100),
-    dataFalecimento  DATE,
-    escolaridade     VARCHAR(100),
-    urlDetalhes      VARCHAR(300),
-    urlWebsite       VARCHAR(300)
+CREATE TABLE parlamentar (
+    idParlamentar INT AUTO_INCREMENT PRIMARY KEY,
+    idApi INT UNIQUE NOT NULL,
+    cargo VARCHAR(50),
+    nomeCivil VARCHAR(255),
+    nomeUrna VARCHAR(255),
+    partidoAtual VARCHAR(50),
+    uf CHAR(2),
+    fotoUrl VARCHAR(500),
+    dataNascimento DATE,
+    email VARCHAR(255),
+    telefone VARCHAR(20),
+    enderecoGabinete VARCHAR(500),
+    INDEX idx_parlamentar_idApi (idApi)
 );
 
-CREATE TABLE IF NOT EXISTS RedeSocial (
-    idRede INT PRIMARY KEY AUTO_INCREMENT,
-    idDeputado INT NOT NULL,
-    linkRedeSocial VARCHAR(300) NOT NULL,
-    FOREIGN KEY (idDeputado) REFERENCES Deputado(idDeputado)
+CREATE TABLE tipoProposicao (
+    idTipoProposicao INT AUTO_INCREMENT PRIMARY KEY,
+    sigla VARCHAR(10) NOT NULL,
+    nome VARCHAR(255) NOT NULL,
+    casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL,
+    UNIQUE KEY unique_sigla_casa (sigla, casa)
 );
 
-CREATE TABLE IF NOT EXISTS Despesa (
-    idDeputado INT NOT NULL,
-    codDocumento INT NOT NULL,
+CREATE TABLE proposicao (
+    idProposicao INT AUTO_INCREMENT PRIMARY KEY,
+    idApi INT UNIQUE NOT NULL,
+    idTipoProposicao INT,
+    numero VARCHAR(20),
     ano INT,
-    cnpjCpfFornecedor VARCHAR(20),
-    codLote INT,
-    codTipoDocumento INT,
-    dataDocumento DATE,
-    mes TINYINT,
-    nomeFornecedor VARCHAR(200),
-    numDocumento VARCHAR(50),
-    numRessarcimento VARCHAR(50),
-    parcela VARCHAR(20),
-    tipoDespesa VARCHAR(200),
-    tipoDocumento VARCHAR(200),
-    urlDocumento VARCHAR(300),
-    valorDocumento DECIMAL(10,2),
-    valorGlosa DECIMAL(10,2),
-    valorLiquido DECIMAL(10,2),
-    
-    PRIMARY KEY (idDeputado, codDocumento),
-    FOREIGN KEY (idDeputado) REFERENCES Deputado(idDeputado)
+    ementa TEXT,
+    statusAtual VARCHAR(255),
+    FOREIGN KEY (idTipoProposicao) 
+        REFERENCES tipoProposicao(idTipoProposicao) 
+        ON DELETE SET NULL,
+    INDEX idx_proposicao_idApi (idApi),
+    INDEX idx_proposicao_tipo (idTipoProposicao)
 );
 
-CREATE TABLE IF NOT EXISTS Partido (
-    idPartido INT PRIMARY KEY AUTO_INCREMENT,
-    siglaPartido VARCHAR(300),
-    uriPartido        VARCHAR(200),
-    nome  VARCHAR(300) 
+CREATE TABLE votacao ( 
+    idVotacao INT AUTO_INCREMENT PRIMARY KEY,
+    idApi VARCHAR(50) UNIQUE NOT NULL,
+    idProposicao INT NULL,
+    dataVotacao DATE NULL,
+    resumoMateria TEXT,
+    resultadoFinal VARCHAR(100),
+    tipoVotacao ENUM('NOMINAL', 'SIMBOLICA', 'SECRETA'),
+    FOREIGN KEY (idProposicao) 
+        REFERENCES proposicao(idProposicao) 
+        ON DELETE SET NULL,
+    INDEX idx_votacao_idApi (idApi),
+    INDEX idx_votacao_data (dataVotacao),
+    INDEX idx_votacao_proposicao (idProposicao)
 );
 
-CREATE TABLE IF NOT EXISTS Gabinete (
-    idGabinete INT PRIMARY KEY AUTO_INCREMENT,
-    andar      VARCHAR(10),
-    emailGabinete VARCHAR(150),
-    nomeGabinete  VARCHAR(200),
-    predio        VARCHAR(100),
-    sala          VARCHAR(10),
-    telefone      VARCHAR(20)
+CREATE TABLE voto (
+    idVoto INT AUTO_INCREMENT PRIMARY KEY,
+    idParlamentar INT NOT NULL,
+    idVotacao INT NOT NULL,
+    idApi VARCHAR(100) UNIQUE NOT NULL,
+    votoRegistrado ENUM('SIM', 'NAO', 'ABSTENCAO', 'AUSENTE'),
+    FOREIGN KEY (idParlamentar) 
+        REFERENCES parlamentar(idParlamentar) 
+        ON DELETE CASCADE,
+    FOREIGN KEY (idVotacao) 
+        REFERENCES votacao(idVotacao) 
+        ON DELETE CASCADE,
+    INDEX idx_voto_parlamentar (idParlamentar),
+    INDEX idx_voto_votacao (idVotacao)
 );
 
-CREATE TABLE IF NOT EXISTS Historico (
-    idHistorico INT PRIMARY KEY AUTO_INCREMENT, 
-    idDeputado INT NOT NULL,
-    idPartido INT NOT NULL,
-    idGabinete INT NOT NULL,
-    
-    uriHistorico VARCHAR(200),
-    condicaoEleitoral VARCHAR(100),
-    urlFoto VARCHAR(100),
-    emailHistorico VARCHAR(100),
-    dataHistorico DATE, 
-    descricaoStatus VARCHAR(300),
-    nomeParlamentar VARCHAR(200),
-    situacao VARCHAR(100), 
-    nomeEleitoral VARCHAR(200),
-    siglaUF CHAR(2),
-    
-    UNIQUE KEY uk_historico (idDeputado, dataHistorico, situacao),
+CREATE TABLE autoriaProposicao (
+    idParlamentar INT NOT NULL,
+    idProposicao INT NOT NULL,
+    PRIMARY KEY (idParlamentar, idProposicao),
+    FOREIGN KEY (idParlamentar) 
+        REFERENCES parlamentar(idParlamentar) 
+        ON DELETE CASCADE,
+    FOREIGN KEY (idProposicao) 
+        REFERENCES proposicao(idProposicao) 
+        ON DELETE CASCADE,
+    INDEX idx_autoria_prop (idProposicao)
+);
 
-    FOREIGN KEY (idGabinete) REFERENCES Gabinete(idGabinete),
-    FOREIGN KEY (idDeputado) REFERENCES Deputado(idDeputado),
-    FOREIGN KEY (idPartido) REFERENCES Partido(idPartido)
+CREATE TABLE redeSocial (
+    idRedeSocial INT AUTO_INCREMENT PRIMARY KEY,
+    idParlamentar INT NOT NULL,
+    plataforma VARCHAR(50),
+    url VARCHAR(500),
+    FOREIGN KEY (idParlamentar) 
+        REFERENCES parlamentar(idParlamentar) 
+        ON DELETE CASCADE,
+    INDEX idx_rede_parlamentar (idParlamentar)
+);
+
+CREATE TABLE despesa (
+    idDespesa INT AUTO_INCREMENT PRIMARY KEY,
+    idParlamentar INT NOT NULL,
+    dataDespesa DATE,
+    valor DECIMAL(10, 2),
+    fornecedorNome VARCHAR(255),
+    fornecedorCnpjCpf VARCHAR(20),
+    notaFiscalUrl VARCHAR(500),
+    categoria VARCHAR(100),
+    FOREIGN KEY (idParlamentar) 
+        REFERENCES parlamentar(idParlamentar) 
+        ON DELETE CASCADE,
+    INDEX idx_despesa_parlamentar (idParlamentar),
+    INDEX idx_despesa_data (dataDespesa)
 );
