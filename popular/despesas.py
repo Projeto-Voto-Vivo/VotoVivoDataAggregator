@@ -2,6 +2,7 @@ import requests
 import mysql.connector
 import time
 import os
+from tqdm import tqdm
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,154 +21,109 @@ except mysql.connector.Error as err:
     print(f"Erro ao conectar ao banco: {err}")
     exit(1)
 
-# Período de busca (Câmara exige ano/mês, Senado retorna histórico)
-ANO_BUSCA = 2025
-MESES_BUSCA = [7, 8, 9]
+# Período de busca: Da última eleição (2023) até o fim da legislatura (2026)
+ANOS_BUSCA = [2023, 2024, 2025, 2026]
+MESES_BUSCA = list(range(1, 13)) # Todos os meses
 
-# Busca parlamentares ativos para coletar despesas
-cursor.execute("""
-    SELECT idApi, idParlamentar, cargo
-    FROM parlamentar
-    WHERE cargo IN ('Deputado Federal', 'Senador')
-""")
-parlamentares = cursor.fetchall()
+# Busca parlamentares e mapeia idApi -> idParlamentar local
+cursor.execute("SELECT idApi, idParlamentar, cargo FROM parlamentar")
+parlamentares_db = cursor.fetchall()
+mapa_parlamentares = {str(p[0]): p[1] for p in parlamentares_db}
 
-print(f"Iniciando coleta para {len(parlamentares)} parlamentares...\n")
-
-def buscar_despesas_deputado(id_api_dep):
-    """Coleta despesas da API da Câmara dos Deputados"""
+def buscar_despesas_deputado(id_api_dep, ano, meses):
+    """Coleta despesas da Câmara para um ano e lista de meses específicos"""
     url = f"https://dadosabertos.camara.leg.br/api/v2/deputados/{id_api_dep}/despesas"
     resultado = []
-
-    for mes in MESES_BUSCA:
+    
+    for mes in meses:
         pagina = 1
         while True:
-            params = {
-                "ano": ANO_BUSCA,
-                "mes": mes,
-                "itens": 100,
-                "pagina": pagina
-            }
+            params = {"ano": ano, "mes": mes, "itens": 100, "pagina": pagina}
             try:
                 r = requests.get(url, params=params, timeout=20)
-                if r.status_code != 200:
-                    break
-                
+                if r.status_code != 200: break
                 data = r.json()
                 dados = data.get("dados", [])
-                if not dados:
-                    break
-
+                if not dados: break
                 resultado.extend(dados)
-
-                # Verifica se existe próxima página
-                if not any(l["rel"] == "next" for l in data.get("links", [])):
-                    break
-
+                if not any(l["rel"] == "next" for l in data.get("links", [])): break
                 pagina += 1
-                time.sleep(0.1)
-            except Exception as e:
-                print(f" Erro na API da Câmara (Dep. {id_api_dep}): {e}")
-                break
-
+                time.sleep(0.05) # Delay para evitar bloqueio por excesso de requisições
+            except: break
     return resultado
 
-def buscar_despesas_senador(id_api_sen):
-    """Coleta despesas da API do Senado Federal e mapeia para o padrão local"""
-    url = f"https://legis.senado.leg.br/dadosabertos/senador/{id_api_sen}/despesas"
-    resultado_mapeado = []
-    
+def processar_despesas_senado_em_bloco(ano):
+    """Coleta despesas de TODOS os senadores (Lote Anual)"""
+    url = f"https://adm.senado.gov.br/adm-dadosabertos/api/v1/senadores/despesas_ceaps/{ano}"
+    print(f"-> Baixando lote anual do Senado para o ano {ano}...")
     try:
-        r = requests.get(url, headers={"Accept": "application/json"}, timeout=20)
-        if r.status_code != 200:
-            return []
-
-        data = r.json()
-        # O Senado retorna uma lista dentro de ListaDespesasSenador -> Despesas -> Despesa
-        lista_bruta = data.get("ListaDespesasSenador", {}).get("Despesas", {}).get("Despesa", [])
-        
-        # Garante que lista_bruta seja uma lista (API as vezes retorna objeto único se houver apenas uma despesa)
-        if isinstance(lista_bruta, dict):
-            lista_bruta = [lista_bruta]
-
-        for d in lista_bruta:
-            # Filtra apenas o período solicitado
-            ano_despesa = int(d.get("Ano", 0))
-            mes_despesa = int(d.get("Mes", 0))
-            
-            if ano_despesa == ANO_BUSCA and mes_despesa in MESES_BUSCA:
-                # O Senado não fornece uma "data exata" da nota, apenas Mês/Ano. 
-                # Normalizamos para o dia 1 do mês.
-                data_normalizada = f"{ano_despesa}-{mes_despesa:02d}-01"
-                
-                # Mapeamento para os campos da tabela local
-                resultado_mapeado.append({
-                    "data": data_normalizada,
-                    "valor": d.get("Valor"),
-                    "fornecedor": d.get("Fornecedor"),
-                    "cnpjCpf": d.get("CnpjCpf"),
-                    "url": None, # Senado raramente fornece link direto da nota fiscal nesta API
-                    "categoria": d.get("TipoDespesa")
-                })
-
-        return resultado_mapeado
+        r = requests.get(url, timeout=90)
+        return r.json() if r.status_code == 200 else []
     except Exception as e:
-        print(f" Erro na API do Senado (Sen. {id_api_sen}): {e}")
+        print(f"Erro ao baixar lote do Senado ({ano}): {e}")
         return []
 
-total_geral_inserido = 0
+total_inserido = 0
 
-for id_api, id_interno, cargo in parlamentares:
-    dados_para_inserir = []
-    
-    if cargo == "Deputado Federal":
-        print(f"Processando Deputado {id_api}...", end="\r")
-        despesas_brutas = buscar_despesas_deputado(id_api)
-        for d in despesas_brutas:
-            dados_para_inserir.append((
-                id_interno,
-                d.get("dataDocumento"),
-                d.get("valorLiquido"),
-                d.get("nomeFornecedor"),
-                d.get("cnpjCpfFornecedor"),
-                d.get("urlDocumento"),
-                d.get("tipoDespesa")
+# Separa deputados para o loop individual
+deputados = [p for p in parlamentares_db if p[2] == 'Deputado Federal']
+
+for ano in ANOS_BUSCA:
+    print(f"\n--- INICIANDO PROCESSAMENTO DO ANO {ano} ---")
+
+    # --- CÂMARA (Individual) ---
+    print(f"[CÂMARA] Coletando despesas detalhadas para {len(deputados)} deputados...")
+    for id_api, id_interno, _ in tqdm(deputados, desc=f"Deputados {ano}"):
+        despesas = buscar_despesas_deputado(id_api, ano, MESES_BUSCA)
+        batch = []
+        for d in despesas:
+            batch.append((
+                id_interno, d.get("dataDocumento"), d.get("valorLiquido"),
+                d.get("nomeFornecedor"), d.get("cnpjCpfFornecedor"),
+                d.get("urlDocumento"), d.get("tipoDespesa")
             ))
-
-    elif cargo == "Senador":
-        print(f"Processando Senador {id_api}...", end="\r")
-        despesas_mapeadas = buscar_despesas_senador(id_api)
-        for d in despesas_mapeadas:
-            dados_para_inserir.append((
-                id_interno,
-                d["data"],
-                d["valor"],
-                d["fornecedor"],
-                d["cnpjCpf"],
-                d["url"],
-                d["categoria"]
-            ))
-
-    if dados_para_inserir:
-        try:
-            sql = """
-                INSERT INTO despesa
-                (idParlamentar, dataDespesa, valor, fornecedorNome,
-                 fornecedorCnpjCpf, notaFiscalUrl, categoria)
+        
+        if batch:
+            cursor.executemany("""
+                INSERT IGNORE INTO despesa 
+                (idParlamentar, dataDespesa, valor, fornecedorNome, fornecedorCnpjCpf, notaFiscalUrl, categoria)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """
-            cursor.executemany(sql, dados_para_inserir)
+            """, batch)
             db.commit()
-            total_geral_inserido += len(dados_para_inserir)
-        except mysql.connector.Error as err:
-            print(f"\n Erro ao inserir despesas do parlamentar {id_api}: {err}")
+            total_inserido += len(batch)
 
-    time.sleep(0.1)
+    # --- SENADO (Lote) ---
+    print(f"[SENADO] Coletando lote detalhado para todos os senadores...")
+    lote_senado = processar_despesas_senado_em_bloco(ano)
+    batch_senado = []
 
-print("\n" + "="*40)
-print(" IMPORTAÇÃO DE DESPESAS CONCLUÍDA")
-print(f" Total de registros inseridos: {total_geral_inserido}")
-print("="*40)
+    if lote_senado:
+        for d in tqdm(lote_senado, desc=f"Senadores {ano}"):
+            id_api_sen = str(d.get("codSenador"))
+            # Verifica se o senador está no nosso banco de dados
+            if id_api_sen in mapa_parlamentares:
+                id_interno = mapa_parlamentares[id_api_sen]
+                
+                # A API do Senado retorna a data exata no campo 'data'
+                data_despesa = d.get("data") 
+                
+                batch_senado.append((
+                    id_interno, data_despesa, d.get("valorReembolsado"),
+                    d.get("fornecedor"), d.get("cpfCnpj"), None, d.get("tipoDespesa")
+                ))
+
+        if batch_senado:
+            cursor.executemany("""
+                INSERT IGNORE INTO despesa 
+                (idParlamentar, dataDespesa, valor, fornecedorNome, fornecedorCnpjCpf, notaFiscalUrl, categoria)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, batch_senado)
+            db.commit()
+            total_inserido += len(batch_senado)
+
+print("\n" + "="*50)
+print(f"IMPORTAÇÃO COMPLETA (2023-2026): {total_inserido} registros inseridos.")
+print("="*50)
 
 cursor.close()
 db.close()
