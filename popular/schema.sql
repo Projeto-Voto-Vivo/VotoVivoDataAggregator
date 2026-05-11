@@ -40,6 +40,25 @@ CREATE TABLE proposicao (
     INDEX idx_proposicao_tipo (idTipoProposicao)
 );
 
+CREATE TABLE IF NOT EXISTS tema (
+    idTema INT AUTO_INCREMENT PRIMARY KEY,
+    codigoExterno INT NOT NULL, 
+    casa ENUM('Camara', 'Senado') NOT NULL,
+    descricao VARCHAR(255) NOT NULL,
+    nivel ENUM('UNICO', 'GERAL', 'ESPECIFICO') DEFAULT 'UNICO',
+    idTemaPai INT DEFAULT NULL,
+    FOREIGN KEY (idTemaPai) REFERENCES tema(idTema),
+    UNIQUE KEY unique_tema_casa (codigoExterno, casa, nivel)
+);
+
+CREATE TABLE IF NOT EXISTS temaProposicao (
+    idProposicao INT NOT NULL,
+    idTema INT NOT NULL,
+    PRIMARY KEY (idProposicao, idTema),
+    FOREIGN KEY (idProposicao) REFERENCES proposicao(idProposicao) ON DELETE CASCADE,
+    FOREIGN KEY (idTema) REFERENCES tema(idTema) ON DELETE CASCADE
+);
+
 CREATE TABLE votacao ( 
     idVotacao INT AUTO_INCREMENT PRIMARY KEY,
     idApi VARCHAR(50) UNIQUE NOT NULL,
