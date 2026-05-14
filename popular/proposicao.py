@@ -36,7 +36,7 @@ session.mount('https://', HTTPAdapter(max_retries=retries))
 
 
 ANO = 2025
-MESES = list(range(7, 11))  
+MESES = list(range(7, 10))  
 
 
 NOMES_MESES = {

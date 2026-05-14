@@ -8,25 +8,70 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-try:
-    db = mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo"),
-        autocommit=False
+
+
+db = mysql.connector.connect(
+    host=os.getenv("DB_HOST", "localhost"),
+    user=os.getenv("DB_USER", "root"),
+    password=os.getenv("DB_PASSWORD", ""),
+    database=os.getenv("DB_NAME", "votoVivo"),
+    autocommit=False
+)
+
+cursor = db.cursor()
+print("Conectado ao banco.")
+
+
+
+orgaos_cache = {}
+
+cursor.execute("SELECT idOrgao, idApi FROM orgao")
+for id_, idApi in cursor.fetchall():
+    orgaos_cache[str(idApi)] = id_
+
+def garantir_orgao(uri_orgao, sigla=None):
+    if not uri_orgao:
+        return None
+
+    id_api = uri_orgao.split("/")[-1]
+
+    if id_api in orgaos_cache:
+        return orgaos_cache[id_api]
+
+    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = %s", (id_api,))
+    res = cursor.fetchone()
+
+    if res:
+        orgaos_cache[id_api] = res[0]
+        return res[0]
+
+    nome = None
+    try:
+        url = f"https://dadosabertos.camara.leg.br/api/v2/orgaos/{id_api}"
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            dados = r.json().get("dados", {})
+            nome = dados.get("nome")
+            sigla = dados.get("sigla") or sigla
+    except:
+        pass
+
+    cursor.execute(
+        "INSERT INTO orgao (idApi, sigla, nome) VALUES (%s, %s, %s)",
+        (id_api, sigla or "N/A", nome)
     )
-    cursor = db.cursor()
-    print("Conexão estabelecida.")
-except mysql.connector.Error as err:
-    print(f"Erro de conexão: {err}")
-    sys.exit(1)
+    db.commit()
+
+    id_novo = cursor.lastrowid
+    orgaos_cache[id_api] = id_novo
+    return id_novo
+
+
 
 cursor.execute("SELECT idApi, idProposicao FROM proposicao")
 map_proposicoes = {str(row[0]): row[1] for row in cursor.fetchall()}
 
-cursor.execute("SELECT idApi, idProposicao FROM votacao")
-votacoes_existentes = {str(row[0]): row[1] for row in cursor.fetchall()}
+
 
 meses = [
     ("2025-07-01", "2025-07-31"),
@@ -35,56 +80,58 @@ meses = [
 ]
 
 url = "https://dadosabertos.camara.leg.br/api/v2/votacoes"
-lista_ids_votacoes = []
+lista_ids = []
 
-for data_inicio, data_fim in meses:
+
+
+for inicio, fim in meses:
     pagina = 1
     
     while True:
         params = {
-            "dataInicio": data_inicio,
-            "dataFim": data_fim,
+            "dataInicio": inicio,
+            "dataFim": fim,
             "itens": 100,
             "pagina": pagina
         }
-        
+
         res = requests.get(url, params=params, timeout=60)
-        
         if res.status_code != 200:
             break
-        
-        votacoes = res.json().get("dados", [])
-        
-        if not votacoes:
+
+        dados = res.json().get("dados", [])
+        if not dados:
             break
-        
-        for v in votacoes:
-            if v.get('id'):
-                lista_ids_votacoes.append(v.get('id'))
-        
-        if len(votacoes) < 100:
+
+        for v in dados:
+            if v.get("id"):
+                lista_ids.append(v["id"])
+
+        if len(dados) < 100:
             break
-        
+
         pagina += 1
         time.sleep(0.2)
 
-lista_ids_votacoes = list(set(lista_ids_votacoes))
+lista_ids = list(set(lista_ids))
 
-for id_api in tqdm(lista_ids_votacoes):
 
+
+for id_api in tqdm(lista_ids):
     try:
-        res_det = requests.get(f"{url}/{id_api}", timeout=60)
-
-        if res_det.status_code != 200:
+        res = requests.get(f"{url}/{id_api}", timeout=60)
+        if res.status_code != 200:
             continue
 
-        v = res_det.json().get("dados", {})
+        v = res.json().get("dados", {})
+
+        
 
         id_prop_api = None
 
-        for prop in v.get("proposicoesAfetadas", []):
-            if prop.get("id"):
-                id_prop_api = str(prop.get("id"))
+        for p in v.get("proposicoesAfetadas", []):
+            if p.get("id"):
+                id_prop_api = str(p.get("id"))
                 break
 
         if not id_prop_api:
@@ -93,101 +140,70 @@ for id_api in tqdm(lista_ids_votacoes):
                     id_prop_api = str(obj.get("id"))
                     break
 
-        id_interno_proposicao = map_proposicoes.get(id_prop_api)
+        id_proposicao = map_proposicoes.get(id_prop_api)
 
-        id_existente = votacoes_existentes.get(str(id_api))
+    
 
-        if id_existente and id_existente == id_interno_proposicao:
-            continue
+        id_orgao = garantir_orgao(
+            v.get("uriOrgao"),
+            v.get("siglaOrgao")
+        )
 
-        data_completa = v.get('dataHoraRegistro', '')
-        data_votacao = data_completa.split('T')[0] if data_completa else v.get('data')
+        
 
-        aprovacao = v.get('aprovacao')
+        dataHora = v.get("dataHoraRegistro")
+
+        if not dataHora:
+            data = v.get("data")
+            if data:
+                dataHora = data + " 00:00:00"
+
+        
+
+        aprovacao = v.get("aprovacao")
+
         if aprovacao == 1:
             resultado = "Aprovado"
         elif aprovacao == 0:
             resultado = "Rejeitado"
         else:
-            resultado = v.get('resultado')
+            resultado = v.get("resultado")
 
-        resumo = v.get('descricao')
+        resumo = v.get("descricao")
+        tipo = "SIMBOLICA"
 
-        tipo_votacao = 'SIMBOLICA'
+        
 
         sql = """
             INSERT INTO votacao
-            (idApi, idProposicao, dataVotacao, resumoMateria, resultadoFinal, tipoVotacao)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            (idApi, idProposicao, idOrgao, dataHora, resumoMateria, resultadoFinal, tipoVotacao)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-            idProposicao = VALUES(idProposicao),
-            dataVotacao = VALUES(dataVotacao),
-            resumoMateria = VALUES(resumoMateria),
-            resultadoFinal = VALUES(resultadoFinal),
-            tipoVotacao = VALUES(tipoVotacao)
+                idProposicao = VALUES(idProposicao),
+                idOrgao = VALUES(idOrgao),
+                dataHora = VALUES(dataHora),
+                resumoMateria = VALUES(resumoMateria),
+                resultadoFinal = VALUES(resultadoFinal),
+                tipoVotacao = VALUES(tipoVotacao)
         """
 
         cursor.execute(sql, (
             str(id_api),
-            id_interno_proposicao,
-            data_votacao,
+            id_proposicao,
+            id_orgao,
+            dataHora,
             resumo,
             resultado,
-            tipo_votacao
+            tipo
         ))
-
-        votos_necessarios = True
-
-        if id_existente:
-            cursor.execute("SELECT COUNT(*) FROM voto WHERE idVotacao = %s", (id_existente,))
-            if cursor.fetchone()[0] > 0:
-                votos_necessarios = False
-
-        if votos_necessarios:
-            res_votos = requests.get(f"{url}/{id_api}/votos", timeout=30)
-
-            if res_votos.status_code == 200:
-                votos = res_votos.json().get("dados", [])
-                
-                if votos:
-                    cursor.execute("SELECT idVotacao FROM votacao WHERE idApi = %s", (str(id_api),))
-                    id_votacao_interno = cursor.fetchone()[0]
-
-                    votos_batch = []
-
-                    cursor.execute("SELECT idApi, idParlamentar FROM parlamentar")
-                    map_parlamentares = {str(row[0]): row[1] for row in cursor.fetchall()}
-
-                    for voto in votos:
-                        id_dep_api = str(voto.get('deputado_', {}).get('id'))
-
-                        if id_dep_api in map_parlamentares:
-                            id_parlamentar = map_parlamentares[id_dep_api]
-
-                            voto_txt = voto.get('tipoVoto')
-                            if voto_txt == 'Sim':
-                                voto_enum = 'SIM'
-                            elif voto_txt == 'Não':
-                                voto_enum = 'NAO'
-                            elif voto_txt == 'Abstenção':
-                                voto_enum = 'ABSTENCAO'
-                            else:
-                                continue
-
-                            id_api_voto = f"{id_api}_{id_dep_api}"
-                            votos_batch.append((id_parlamentar, id_votacao_interno, id_api_voto, voto_enum))
-
-                    if votos_batch:
-                        cursor.executemany("""
-                            INSERT IGNORE INTO voto 
-                            (idParlamentar, idVotacao, idApi, votoRegistrado)
-                            VALUES (%s, %s, %s, %s)
-                        """, votos_batch)
 
         db.commit()
 
-    except:
+    except Exception as e:
+        print(f"Erro na votação {id_api}: {e}")
         continue
 
 cursor.close()
 db.close()
+
+print("Importação finalizada.")
