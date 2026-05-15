@@ -111,3 +111,38 @@ CREATE TABLE despesa (
     INDEX idx_despesa_parlamentar (idParlamentar),
     INDEX idx_despesa_data (dataDespesa)
 );
+
+CREATE TABLE IF NOT EXISTS emenda (
+    idEmenda INT AUTO_INCREMENT PRIMARY KEY,
+    codigoEmenda VARCHAR(100) NOT NULL UNIQUE,
+    ano INT,
+    tipoEmenda VARCHAR(100),
+    autor VARCHAR(255),
+    nomeAutor VARCHAR(255),
+    numeroEmenda VARCHAR(100),
+    localidadeDoGasto VARCHAR(255),
+    funcao VARCHAR(255),
+    subfuncao VARCHAR(255),
+    valorEmpenhado DECIMAL(15, 2),
+    valorLiquidado DECIMAL(15, 2),
+    valorPago DECIMAL(15, 2),
+    valorRestoInscrito DECIMAL(15, 2),
+    valorRestoCancelado DECIMAL(15, 2),
+    valorRestoPago DECIMAL(15, 2)
+);
+
+CREATE TABLE IF NOT EXISTS emendaDocumento (
+    idEmendaDocumento INT AUTO_INCREMENT PRIMARY KEY,
+    idApi INT,
+    codigoEmenda VARCHAR(100) NOT NULL,
+    data DATE,
+    fase VARCHAR(100),
+    codigoDocumento VARCHAR(100),
+    codigoDocumentoResumido VARCHAR(100),
+    especieTipo VARCHAR(255),
+    tipoEmenda VARCHAR(100),
+    FOREIGN KEY (codigoEmenda)
+        REFERENCES emenda(codigoEmenda)
+        ON DELETE CASCADE,
+    UNIQUE KEY unique_emenda_documento (codigoEmenda, codigoDocumento)
+);
