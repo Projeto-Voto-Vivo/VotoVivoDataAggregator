@@ -1,18 +1,20 @@
+import os
 import requests
 import mysql.connector
 import time
 from tqdm import tqdm
+from dotenv import load_dotenv
 
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "",
-    "database": "votoVivo"
-}
+load_dotenv()
 
 BASE_URL = "https://dadosabertos.camara.leg.br/api/v2"
 
-db = mysql.connector.connect(**DB_CONFIG)
+db = mysql.connector.connect(
+    host=os.getenv("DB_HOST", "localhost"),
+    user=os.getenv("DB_USER", "test"),
+    password=os.getenv("DB_PASSWORD", "testpass"),
+    database=os.getenv("DB_NAME", "votovivo")
+)
 cursor = db.cursor()
 
 
