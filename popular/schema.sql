@@ -37,14 +37,26 @@ CREATE TABLE proposicao (
         ON DELETE SET NULL
 );
 
-CREATE TABLE orgao (
-    idOrgao INT AUTO_INCREMENT PRIMARY KEY,
-    idApi INT UNIQUE NOT NULL,
-    sigla VARCHAR(50),
-    nome VARCHAR(255)
+CREATE TABLE IF NOT EXISTS tema (
+    idTema INT AUTO_INCREMENT PRIMARY KEY,
+    codigoExterno INT NOT NULL, 
+    casa ENUM('Camara', 'Senado') NOT NULL,
+    descricao VARCHAR(255) NOT NULL,
+    nivel ENUM('UNICO', 'GERAL', 'ESPECIFICO') DEFAULT 'UNICO',
+    idTemaPai INT DEFAULT NULL,
+    FOREIGN KEY (idTemaPai) REFERENCES tema(idTema),
+    UNIQUE KEY unique_tema_casa (codigoExterno, casa, nivel)
 );
 
-CREATE TABLE votacao (
+CREATE TABLE IF NOT EXISTS temaProposicao (
+    idProposicao INT NOT NULL,
+    idTema INT NOT NULL,
+    PRIMARY KEY (idProposicao, idTema),
+    FOREIGN KEY (idProposicao) REFERENCES proposicao(idProposicao) ON DELETE CASCADE,
+    FOREIGN KEY (idTema) REFERENCES tema(idTema) ON DELETE CASCADE
+);
+
+CREATE TABLE votacao ( 
     idVotacao INT AUTO_INCREMENT PRIMARY KEY,
     idApi VARCHAR(50) UNIQUE NOT NULL,
     idProposicao INT NULL,
@@ -151,14 +163,6 @@ CREATE TABLE tramitacao (
         FOREIGN KEY (idProposicao)
         REFERENCES proposicao(idProposicao)
         ON DELETE CASCADE,
-
-    CONSTRAINT fk_tramitacao_tipo
-        FOREIGN KEY (idTipoTramitacao)
-        REFERENCES tipoTramitacao(idTipoTramitacao)
-        ON DELETE SET NULL,
-
-    CONSTRAINT fk_tramitacao_orgao
-        FOREIGN KEY (idOrgao)
-        REFERENCES orgao(idOrgao)
-        ON DELETE SET NULL
+    INDEX idx_despesa_parlamentar (idParlamentar),
+    INDEX idx_despesa_data (dataDespesa)
 );
