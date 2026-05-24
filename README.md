@@ -29,6 +29,9 @@ cp .env.example .env
 | `DB_USER`     | Usuário do MySQL       | —           |
 | `DB_PASSWORD` | Senha do MySQL         | —           |
 | `DB_NAME`     | Nome do banco de dados | `votovivo`  |
+| `PORTAL_TRANSPARENCIA_API_KEY` | Token da API do Portal da Transparência. Obrigatório para importar emendas. | 
+
+> **Importante:** o script `emenda.py` precisa do token `PORTAL_TRANSPARENCIA_API_KEY` para consultar a API do Portal da Transparência.
 
 ## Banco de dados
 
@@ -60,6 +63,8 @@ Execute os scripts na ordem abaixo para garantir que as dependências entre tabe
 | 14    | `orgao.py`              | Importa os órgãos (comissões, plenário…) das tramitações          |
 | 15    | `tramitacao.py`         | Importa o histórico de tramitação das proposições                 |
 | 16    | `historico.py`          | Importa histórico complementar de situações                       |
+| 17    | `emenda.py`             | Emendas parlamentares importadas do Portal da Transparência       |
+| 18    | `relacionarEmendaParlamentar.py`   Relacionamento entre emendas e parlamentares encontrados |
 
 Cada script pode ser executado individualmente:
 
@@ -71,3 +76,4 @@ python popular/parlamentar.py
 
 - **Câmara dos Deputados** — [dadosabertos.camara.leg.br](https://dadosabertos.camara.leg.br)
 - **Senado Federal** — [legis.senado.leg.br/dadosabertos](https://legis.senado.leg.br/dadosabertos)
+- **Portal da Transparência** — [api.portaldatransparencia.gov.br](https://api.portaldatransparencia.gov.br)
