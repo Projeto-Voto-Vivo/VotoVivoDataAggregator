@@ -15,7 +15,7 @@ CREATE TABLE parlamentar (
     telefone VARCHAR(20),
     enderecoGabinete VARCHAR(500),
     INDEX idx_parlamentar_idApi (idApi)
-);
+) ;
 
 CREATE TABLE tipoProposicao (
     idTipoProposicao INT AUTO_INCREMENT PRIMARY KEY,
@@ -128,11 +128,17 @@ CREATE TABLE IF NOT EXISTS emenda (
     valorPago DECIMAL(15, 2),
     valorRestoInscrito DECIMAL(15, 2),
     valorRestoCancelado DECIMAL(15, 2),
-    valorRestoPago DECIMAL(15, 2)
-);
+    valorRestoPago DECIMAL(15, 2),
+
+    INDEX idx_emenda_codigo (codigoEmenda),
+    INDEX idx_emenda_ano (ano),
+    INDEX idx_emenda_autor (autor),
+    INDEX idx_emenda_tipo (tipoEmenda)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS emendaDocumento (
     idEmendaDocumento INT AUTO_INCREMENT PRIMARY KEY,
+    idEmenda INT NOT NULL,
     idApi INT,
     codigoEmenda VARCHAR(100) NOT NULL,
     data DATE,
@@ -141,8 +147,44 @@ CREATE TABLE IF NOT EXISTS emendaDocumento (
     codigoDocumentoResumido VARCHAR(100),
     especieTipo VARCHAR(255),
     tipoEmenda VARCHAR(100),
-    FOREIGN KEY (codigoEmenda)
-        REFERENCES emenda(codigoEmenda)
+
+    FOREIGN KEY (idEmenda)
+        REFERENCES emenda(idEmenda)
         ON DELETE CASCADE,
-    UNIQUE KEY unique_emenda_documento (codigoEmenda, codigoDocumento)
-);
+
+    UNIQUE KEY unique_emenda_documento (idEmenda, codigoDocumento),
+    INDEX idx_emenda_documento_id_emenda (idEmenda),
+    INDEX idx_emenda_documento_codigo_emenda (codigoEmenda),
+    INDEX idx_emenda_documento_data (data),
+    INDEX idx_emenda_documento_fase (fase)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS emendaParlamentar (
+    idEmendaParlamentar INT AUTO_INCREMENT PRIMARY KEY,
+    idEmenda INT NOT NULL,
+    codigoEmenda VARCHAR(100) NOT NULL,
+    idParlamentar INT NOT NULL,
+
+    nomeAutorPortal VARCHAR(255),
+    nomeAutorNormalizado VARCHAR(255),
+
+    metodoVinculo VARCHAR(100),
+    confiancaVinculo DECIMAL(5, 2),
+
+    FOREIGN KEY (idEmenda)
+        REFERENCES emenda(idEmenda)
+        ON DELETE CASCADE,
+
+    FOREIGN KEY (idParlamentar)
+        REFERENCES parlamentar(idParlamentar)
+        ON DELETE CASCADE,
+
+    UNIQUE KEY unique_emenda_parlamentar (
+        idEmenda,
+        idParlamentar
+    ),
+
+    INDEX idx_emenda_parlamentar_emenda (idEmenda),
+    INDEX idx_emenda_parlamentar_codigo (codigoEmenda),
+    INDEX idx_emenda_parlamentar_parlamentar (idParlamentar)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

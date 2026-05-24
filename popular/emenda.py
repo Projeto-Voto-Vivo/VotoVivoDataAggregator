@@ -10,7 +10,7 @@ load_dotenv()
 
 
 API_KEY = os.getenv("PORTAL_TRANSPARENCIA_API_KEY")
-ANO = os.getenv("EMENDAS_ANO", "2025")
+ANO = os.getenv("EMENDAS_ANO", "2024")
 SLEEP_SECONDS = float(os.getenv("EMENDAS_SLEEP", "0.7"))
 
 if not API_KEY:
@@ -95,6 +95,10 @@ while True:
             timeout=30
         )
 
+        print("URL chamada:", response.url)
+        print("Status:", response.status_code)
+        print("Resposta:", response.text[:1000])
+
         if response.status_code == 429:
             print("Limite da API atingido. Aguardando 60 segundos...")
             time.sleep(60)
@@ -167,6 +171,18 @@ while True:
                 )
 
                 cursor.execute(sql_emenda, valores_emenda)
+
+                cursor.execute(
+                    "SELECT idEmenda FROM emenda WHERE codigoEmenda = %s",
+                    (codigo_emenda,)
+                )
+                resultado_emenda = cursor.fetchone()
+
+                if not resultado_emenda:
+                    print(f" Emenda {codigo_emenda} não encontrada após inserção")
+                    continue
+
+                id_emenda = resultado_emenda[0]
                 contador_emendas += 1
 
                 url_documentos = (
@@ -207,6 +223,7 @@ while True:
 
                         sql_documento = """
                             INSERT IGNORE INTO emendaDocumento (
+                                idEmenda,
                                 idApi,
                                 codigoEmenda,
                                 data,
@@ -216,10 +233,11 @@ while True:
                                 especieTipo,
                                 tipoEmenda
                             )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """
 
                         valores_documento = (
+                            id_emenda,
                             documento.get("id"),
                             codigo_emenda,
                             converter_data(documento.get("data")),
