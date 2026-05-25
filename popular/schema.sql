@@ -1,4 +1,4 @@
-CREATE DATABASE votoVivo;
+CREATE DATABASE IF NOT EXISTS votoVivo;
 USE votoVivo;
 
 CREATE TABLE parlamentar (
@@ -56,9 +56,18 @@ CREATE TABLE IF NOT EXISTS temaProposicao (
     FOREIGN KEY (idTema) REFERENCES tema(idTema) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS orgao (
+    idOrgao INT AUTO_INCREMENT PRIMARY KEY,
+    idApi VARCHAR(50) UNIQUE NOT NULL,
+    sigla VARCHAR(50),
+    nome VARCHAR(500),
+    casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL
+);
+
 CREATE TABLE votacao ( 
     idVotacao INT AUTO_INCREMENT PRIMARY KEY,
     idApi VARCHAR(50) UNIQUE NOT NULL,
+    casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL, 
     idProposicao INT NULL,
     idOrgao INT NULL,
     dataHora DATETIME NULL,
@@ -129,7 +138,10 @@ CREATE TABLE despesa (
 
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+        
+    INDEX idx_despesa_parlamentar (idParlamentar),
+    INDEX idx_despesa_data (dataDespesa)
 );
 
 CREATE TABLE tipoTramitacao (
@@ -141,19 +153,14 @@ CREATE TABLE tipoTramitacao (
 
 CREATE TABLE tramitacao (
     idTramitacao INT AUTO_INCREMENT PRIMARY KEY,
-
     idApi VARCHAR(50) NOT NULL,
-
     idProposicao INT NOT NULL,
     idTipoTramitacao INT,
     idOrgao INT,
-
     dataHora DATETIME,
     sequencia INT,
-
     descricaoTramitacao VARCHAR(255),
     descricaoSituacao VARCHAR(255),
-
     despacho TEXT,
 
     CONSTRAINT unique_tramitacao
@@ -162,10 +169,32 @@ CREATE TABLE tramitacao (
     CONSTRAINT fk_tramitacao_proposicao
         FOREIGN KEY (idProposicao)
         REFERENCES proposicao(idProposicao)
-        ON DELETE CASCADE,
-    INDEX idx_despesa_parlamentar (idParlamentar),
-    INDEX idx_despesa_data (dataDespesa)
+        ON DELETE CASCADE
 );
+
+CREATE TABLE evento (
+    idEvento INT AUTO_INCREMENT PRIMARY KEY,
+    idApi VARCHAR(50) UNIQUE NOT NULL,
+    casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL,
+    idOrgao INT,
+    dataHoraInicio DATETIME,
+    descricaoTipo VARCHAR(100),
+    
+    FOREIGN KEY (idOrgao) REFERENCES orgao(idOrgao) ON DELETE SET NULL
+);
+
+CREATE TABLE presenca (
+    idPresenca INT AUTO_INCREMENT PRIMARY KEY,
+    idParlamentar INT NOT NULL,
+    idEvento INT NOT NULL,
+    statusPresenca ENUM('PRESENTE', 'AUSENTE', 'JUSTIFICADA') NOT NULL,
+    justificativa VARCHAR(255),
+    
+    FOREIGN KEY (idParlamentar) REFERENCES parlamentar(idParlamentar) ON DELETE CASCADE,
+    FOREIGN KEY (idEvento) REFERENCES evento(idEvento) ON DELETE CASCADE,
+    UNIQUE KEY unique_presenca_evento (idParlamentar, idEvento)
+);
+
 CREATE TABLE IF NOT EXISTS emenda (
     idEmenda INT AUTO_INCREMENT PRIMARY KEY,
     codigoEmenda VARCHAR(100) NOT NULL UNIQUE,
