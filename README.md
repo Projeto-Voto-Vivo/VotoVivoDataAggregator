@@ -64,7 +64,7 @@ Execute os scripts na ordem abaixo para garantir que as dependências entre tabe
 | 15    | `tramitacao.py`         | Importa o histórico de tramitação das proposições                 |
 | 16    | `historico.py`          | Importa histórico complementar de situações                       |
 | 17    | `emenda.py`             | Emendas parlamentares importadas do Portal da Transparência       |
-| 18    | `relacionarEmendaParlamentar.py`   Relacionamento entre emendas e parlamentares encontrados |
+| 18    | `relacionarEmendaParlamentar.py` | Relacionamento entre emendas e parlamentares encontrados |
 
 Cada script pode ser executado individualmente:
 
