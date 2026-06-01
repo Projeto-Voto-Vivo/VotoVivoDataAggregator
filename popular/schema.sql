@@ -1,6 +1,17 @@
 CREATE DATABASE IF NOT EXISTS votoVivo;
 USE votoVivo;
 
+
+CREATE TABLE etlCheckpoint (
+    idEtlCheckpoint INT AUTO_INCREMENT PRIMARY KEY,
+    nomeScript VARCHAR(100) UNIQUE NOT NULL,
+    ultimoParametro VARCHAR(255) NOT NULL,
+    dataAtualizacao DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    
+    INDEX idx_etl_checkpoint_script (nomeScript)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+
 CREATE TABLE parlamentar (
     idParlamentar INT AUTO_INCREMENT PRIMARY KEY,
     idApi INT UNIQUE NOT NULL,

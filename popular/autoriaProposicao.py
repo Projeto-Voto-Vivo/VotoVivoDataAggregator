@@ -31,6 +31,23 @@ def get_com_retry(url, headers=None, params=None, tentativas=3):
         time.sleep(2 * (tentativa + 1))
     return None
 
+def obter_ultimo_checkpoint(nome_script, default_value="0"):
+    query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
+    cursor.execute(query, (nome_script,))
+    resultado = cursor.fetchone()
+    return resultado[0] if resultado else default_value
+
+def salvar_checkpoint_transacao(nome_script, valor_parametro):
+    query = """
+        INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
+        VALUES (%s, %s)
+        ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
+    """
+    cursor.execute(query, (nome_script, str(valor_parametro)))
+
+script_senado = "popular/autoriaProposicao.py#senado"
+script_camara = "popular/autoriaProposicao.py#camara"
+
 cursor.execute("SELECT idApi, idParlamentar FROM parlamentar")
 mapa_parlamentares = {str(id_api): id_parlamentar for id_api, id_parlamentar in cursor.fetchall()}
 
@@ -93,57 +110,97 @@ def buscar_autores_camara(id_api_prop):
     time.sleep(0.2)
     return list(set(autores))
 
+checkpoint_senado_atual = int(obter_ultimo_checkpoint(script_senado, default_value="0"))
+
 cursor.execute("""
     SELECT p.idProposicao, p.idApi, t.sigla, p.numero, p.ano
     FROM proposicao p
     JOIN tipoProposicao t ON p.idTipoProposicao = t.idTipoProposicao
     WHERE t.casa = 'Senado'
+    ORDER BY p.idProposicao ASC
 """)
 
 proposicoes = cursor.fetchall()
 total = 0
 
-for i, (id_prop, id_api, sigla, numero, ano) in enumerate(proposicoes, 1):
-    autores = buscar_autores_senado(id_api)
+try:
+    for i, (id_prop, id_api, sigla, numero, ano) in enumerate(proposicoes, 1):
+        if id_prop <= checkpoint_senado_atual:
+            continue
 
-    for autor in autores:
-        cursor.execute(
-            "INSERT IGNORE INTO autoriaProposicao (idParlamentar, idProposicao) VALUES (%s, %s)",
-            (autor, id_prop)
-        )
-        total += 1
+        autores = buscar_autores_senado(id_api)
 
-    if i % 10 == 0:
+        if db.in_transaction:
+            db.commit()
+
+        db.start_transaction()
+
+        for autor in autores:
+            cursor.execute(
+                "INSERT IGNORE INTO autoriaProposicao (idParlamentar, idProposicao) VALUES (%s, %s)",
+                (autor, id_prop)
+            )
+            total += 1
+
+        salvar_checkpoint_transacao(script_senado, id_prop)
         db.commit()
-        print(f"Senado {i}/{len(proposicoes)} {total}")
 
-db.commit()
+        if i % 10 == 0:
+            print(f"Senado {i}/{len(proposicoes)} {total}")
+
+except KeyboardInterrupt:
+    if db.in_transaction:
+        db.rollback()
+    print("Execução interrompida no Senado.")
+    cursor.close()
+    db.close()
+    sys.exit(0)
+
+checkpoint_camara_atual = int(obter_ultimo_checkpoint(script_camara, default_value="0"))
 
 cursor.execute("""
     SELECT p.idProposicao, p.idApi, t.sigla, p.numero, p.ano
     FROM proposicao p
     JOIN tipoProposicao t ON p.idTipoProposicao = t.idTipoProposicao
     WHERE t.casa = 'Camara'
+    ORDER BY p.idProposicao ASC
 """)
 
 proposicoes = cursor.fetchall()
 total_camara = 0
 
-for i, (id_prop, id_api, sigla, numero, ano) in enumerate(proposicoes, 1):
-    autores = buscar_autores_camara(id_api)
+try:
+    for i, (id_prop, id_api, sigla, numero, ano) in enumerate(proposicoes, 1):
+        if id_prop <= checkpoint_camara_atual:
+            continue
 
-    for autor in autores:
-        cursor.execute(
-            "INSERT IGNORE INTO autoriaProposicao (idParlamentar, idProposicao) VALUES (%s, %s)",
-            (autor, id_prop)
-        )
-        total_camara += 1
+        autores = buscar_autores_camara(id_api)
 
-    if i % 200 == 0:
+        if db.in_transaction:
+            db.commit()
+
+        db.start_transaction()
+
+        for autor in autores:
+            cursor.execute(
+                "INSERT IGNORE INTO autoriaProposicao (idParlamentar, idProposicao) VALUES (%s, %s)",
+                (autor, id_prop)
+            )
+            total_camara += 1
+
+        salvar_checkpoint_transacao(script_camara, id_prop)
         db.commit()
-        print(f"Camara {i}/{len(proposicoes)} {total_camara}")
 
-db.commit()
+        if i % 200 == 0:
+            print(f"Camara {i}/{len(proposicoes)} {total_camara}")
+
+except KeyboardInterrupt:
+    if db.in_transaction:
+        db.rollback()
+    print("Execução interrompida na Câmara.")
+    cursor.close()
+    db.close()
+    sys.exit(0)
 
 print("Finalizado")
 print(f"Senado {total}")
