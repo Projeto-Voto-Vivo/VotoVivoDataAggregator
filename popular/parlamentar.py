@@ -1,11 +1,18 @@
+import os
 import requests
 import mysql.connector
 import time
-import os 
+from tqdm import tqdm
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
+BASE_URL_CAMARA = "https://dadosabertos.camara.leg.br/api/v2"
+BASE_URL_SENADO = "https://legis.senado.leg.br/dadosabertos"
 
 try:
     db = mysql.connector.connect(
@@ -15,178 +22,255 @@ try:
         database=os.getenv("DB_NAME", "votoVivo")
     )
     cursor = db.cursor()
-
     cursor.execute("SELECT DATABASE()")
-    print(" Banco conectado:", cursor.fetchone()[0])
-
-    print(" Conexão estabelecida.")
+    print(f" [+] Banco conectado: {cursor.fetchone()[0]}")
+    print(" [+] Conexão estabelecida com sucesso.")
 except mysql.connector.Error as err:
-    print(f" Erro de conexão: {err}")
+    print(f" [!] Erro de conexão com o banco de dados: {err}")
     exit(1)
+
+def obter_ultimo_checkpoint(nome_script, default_value="1"):
+    query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
+    cursor.execute(query, (nome_script,))
+    resultado = cursor.fetchone()
+    return resultado[0] if resultado else default_value
+
+def salvar_checkpoint_transacao(nome_script, valor_parametro):
+    query = """
+        INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
+        VALUES (%s, %s)
+        ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
+    """
+    cursor.execute(query, (nome_script, str(valor_parametro)))
+
+sql_check_existe = "SELECT 1 FROM parlamentar WHERE idApi = %s"
 
 sql_insert = """
     INSERT INTO parlamentar 
-    (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete)
+    (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telephone, enderecoGabinete)
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-    ON DUPLICATE KEY UPDATE 
-    cargo = VALUES(cargo),
-    partidoAtual = VALUES(partidoAtual),
-    fotoUrl = VALUES(fotoUrl),
-    email = VALUES(email),
-    telefone = VALUES(telefone),
-    enderecoGabinete = VALUES(enderecoGabinete),
-    dataNascimento = VALUES(dataNascimento)
 """
 
+sql_update = """
+    UPDATE parlamentar SET 
+        cargo = %s,
+        partidoAtual = %s,
+        fotoUrl = %s,
+        email = %s,
+        telephone = %s,
+        enderecoGabinete = %s,
+        dataNascimento = %s
+    WHERE idApi = %s
+"""
 
-print("\n Importando Deputados...")
+print("\n[*] Iniciando importação dos Deputados...")
 url_camara = "https://dadosabertos.camara.leg.br/api/v2/deputados"
-pagina = 1
-total_deputados = 0
 
-while True:
-    response = requests.get(url_camara, params={"pagina": pagina, "itens": 100}, timeout=20)
-    dados = response.json().get("dados", [])
+script_deputados = "popular/parlamentar.py#deputados"
+pagina = int(obter_ultimo_checkpoint(script_deputados, default_value="1"))
+total_deputados_execucao = 0
 
-    if not dados:
-        break
+if pagina > 1:
+    print(f" [i] Registro de checkpoint localizado. Recomeçando da página: {pagina}")
 
-    for dep in dados:
-        id_api = dep.get("id")
-        nome = dep.get("nome")
-        email = dep.get("email")
-        partido = dep.get("siglaPartido")
-        uf = dep.get("siglaUf")
-        foto = dep.get("urlFoto")
+try:
+    while True:
+        response = requests.get(url_camara, params={"pagina": pagina, "itens": 100}, timeout=20)
+        dados = response.json().get("dados", [])
 
-        telefone = None
-        endereco = None
-        data_nascimento = None
+        if not dados:
+            print(" [+] Fim da paginação da API da Câmara atingido.")
+            break
 
-       
-        try:
-            detalhe_url = f"https://dadosabertos.camara.leg.br/api/v2/deputados/{id_api}"
-            resp = requests.get(detalhe_url, timeout=10)
+        if db.in_transaction:
+            db.commit()
 
-            if resp.status_code == 200:
-                detalhe = resp.json().get("dados", {})
-                gabinete = detalhe.get("ultimoStatus", {}).get("gabinete", {})
+        db.start_transaction()
+        bloco_com_sucesso = True
+        
+        print(f" -> Lendo dados da Página {pagina} da API...")
 
-                telefone = gabinete.get("telefone")
-                data_nascimento = detalhe.get("dataNascimento")
+        for dep in dados:
+            id_api = dep.get("id")
+            nome = dep.get("nome")
+            email = dep.get("email")
+            partido = dep.get("siglaPartido")
+            uf = dep.get("siglaUf")
+            foto = dep.get("urlFoto")
 
-                predio = gabinete.get("predio")
-                sala = gabinete.get("sala")
+            telefone = None
+            endereco = None
+            data_nascimento = None
 
-                if predio and sala:
-                    endereco = f"Anexo {predio}, Sala {sala}"
-                elif sala:
-                    endereco = f"Sala {sala}"
+            try:
+                detalhe_url = f"https://dadosabertos.camara.leg.br/api/v2/deputados/{id_api}"
+                resp = requests.get(detalhe_url, timeout=10)
+
+                if resp.status_code == 200:
+                    detalhe = resp.json().get("dados", {})
+                    gabinete = detalhe.get("ultimoStatus", {}).get("gabinete", {})
+
+                    telefone = gabinete.get("telefone")
+                    data_nascimento = detalhe.get("dataNascimento")
+                    predio = gabinete.get("predio")
+                    sala = gabinete.get("sala")
+
+                    if predio and sala:
+                        endereco = f"Anexo {predio}, Sala {sala}"
+                    elif sala:
+                        endereco = f"Sala {sala}"
+            except Exception as e:
+                print(f" [!] Erro ao buscar detalhes adicionais do deputado {id_api}: {e}")
+
+            cursor.execute(sql_check_existe, (id_api,))
+            parlamentar_existe = cursor.fetchone()
+
+            try:
+                if parlamentar_existe:
+                    valores_update = (
+                        "Deputado Federal", partido, foto, email, 
+                        telefone, endereco, data_nascimento, id_api
+                    )
+                    cursor.execute(sql_update, valores_update)
                 else:
-                    endereco = None
+                    valores_insert = (
+                        id_api, "Deputado Federal", nome, nome,
+                        partido, uf, foto, data_nascimento, email, 
+                        telefone, endereco
+                    )
+                    cursor.execute(sql_insert, valores_insert)
+                
+                total_deputados_execucao += 1
+            except Exception as e:
+                print(f" [!] Erro de persistência no deputado {id_api}: {e}")
+                bloco_com_sucesso = False
+                break
 
-        except Exception as e:
-            print(f" Erro deputado {id_api}: {e}")
+            time.sleep(0.1)
 
-        valores = (
-            id_api, "Deputado Federal", nome, nome,
-            partido, uf, foto,
-            data_nascimento, email, telefone, endereco
-        )
+        if bloco_com_sucesso:
+            salvar_checkpoint_transacao(script_deputados, pagina)
+            db.commit()
+            print(f" [+] Página {pagina} consolidada no banco! Acumulado nesta execução: {total_deputados_execucao}")
+            pagina += 1
+        else:
+            db.rollback()
+            break
 
-        try:
-            cursor.execute(sql_insert, valores)
-            total_deputados += 1
-        except Exception as e:
-            print(f" Erro insert deputado {id_api}: {e}")
+except KeyboardInterrupt:
+    
+    if db.in_transaction:
+        db.rollback()
 
-        time.sleep(0.2)
-
-    db.commit()
-    print(f" Página {pagina} | Total: {total_deputados}")
-    pagina += 1
-
-
-
-print("\n🚀 Importando Senadores...")
+print("\n[*] Iniciando importação dos Senadores...")
 url_senado = "https://legis.senado.leg.br/dadosabertos/senador/lista/atual"
 headers = {"Accept": "application/json"}
-total_senadores = 0
 
-res = requests.get(url_senado, headers=headers, timeout=30)
+script_senadores = "popular/parlamentar.py#senadores"
+checkpoint_senado = obter_ultimo_checkpoint(script_senadores, default_value="PENDENTE")
+data_hoje = datetime.now().strftime("%Y-%m-%d")
+total_senadores_execucao = 0
 
-if res.status_code == 200:
-    lista = res.json()["ListaParlamentarEmExercicio"]["Parlamentares"]["Parlamentar"]
+if checkpoint_senado == f"CONCLUIDO_{data_hoje}":
+    print(" [i] Carga diária do Senado Federal já realizada hoje. Etapa pulada.")
+else:
+    try:
+        res = requests.get(url_senado, headers=headers, timeout=30)
 
-    for sen in lista:
-        ident = sen["IdentificacaoParlamentar"]
-        codigo = ident["CodigoParlamentar"]
+        if res.status_code == 200:
+            lista = res.json()["ListaParlamentarEmExercicio"]["Parlamentares"]["Parlamentar"]
+            
+            if db.in_transaction:
+                db.commit()
 
-        nome = ident["NomeParlamentar"]
-        nome_completo = ident["NomeCompletoParlamentar"]
-        partido = ident.get("SiglaPartidoParlamentar", "S/PARTIDO")
-        uf = ident["UfParlamentar"]
-        foto = ident.get("UrlFotoParlamentar")
-        email = ident.get("EmailParlamentar")
+            db.start_transaction()
+            senado_sucesso = True
 
-        telefone = None
-        endereco = "Senado Federal, Praça dos Três Poderes"
-        data_nascimento = None
+            for sen in lista:
+                ident = sen["IdentificacaoParlamentar"]
+                codigo = ident["CodigoParlamentar"]
 
-        
-        try:
-            detalhe_url = f"https://legis.senado.leg.br/dadosabertos/senador/{codigo}"
-            resp = requests.get(detalhe_url, headers=headers, timeout=10)
+                nome = ident["NomeParlamentar"]
+                nome_completo = ident["NomeCompletoParlamentar"]
+                partido = ident.get("SiglaPartidoParlamentar", "S/PARTIDO")
+                uf = ident["UfParlamentar"]
+                foto = ident.get("UrlFotoParlamentar")
+                email = ident.get("EmailParlamentar")
 
-            if resp.status_code == 200:
-                detalhe = resp.json()
+                telefone = None
+                endereco = "Senado Federal, Praça dos Três Poderes"
+                data_nascimento = None
 
-                dados_basicos = detalhe.get("DetalheParlamentar", {}) \
-                                       .get("Parlamentar", {}) \
-                                       .get("DadosBasicosParlamentar", {})
+                try:
+                    detalhe_url = f"https://legis.senado.leg.br/dadosabertos/senador/{codigo}"
+                    resp = requests.get(detalhe_url, headers=headers, timeout=10)
 
-                data_nascimento = dados_basicos.get("DataNascimento")
+                    if resp.status_code == 200:
+                        detalhe = resp.json()
+                        dados_basicos = detalhe.get("DetalheParlamentar", {}) \
+                                               .get("Parlamentar", {}) \
+                                               .get("DadosBasicosParlamentar", {})
 
-        except Exception as e:
-            print(f" Erro senador {codigo}: {e}")
+                        data_nascimento = dados_basicos.get("DataNascimento")
+                except Exception as e:
+                    print(f" [!] Erro ao buscar detalhes adicionais do senador {codigo}: {e}")
 
-        valores = (
-            codigo, "Senador",
-            nome_completo, nome,
-            partido, uf, foto,
-            data_nascimento, email, telefone, endereco
-        )
+                cursor.execute(sql_check_existe, (codigo,))
+                senador_existe = cursor.fetchone()
 
-        try:
-            cursor.execute(sql_insert, valores)
-            total_senadores += 1
-        except Exception as e:
-            print(f" Erro insert senador {codigo}: {e}")
+                try:
+                    if senador_existe:
+                        valores_update = (
+                            "Senador", partido, foto, email, 
+                            telefone, endereco, data_nascimento, codigo
+                        )
+                        cursor.execute(sql_update, valores_update)
+                    else:
+                        valores_insert = (
+                            codigo, "Senador", nome_completo, nome,
+                            partido, uf, foto, data_nascimento, email, 
+                            telefone, endereco
+                        )
+                        cursor.execute(sql_insert, valores_insert)
+                    
+                    total_senadores_execucao += 1
+                except Exception as e:
+                    print(f" [!] Erro de persistência no senador {codigo}: {e}")
+                    senado_sucesso = False
+                    break
 
-        time.sleep(0.2)
+                time.sleep(0.1)
 
-    db.commit()
+            if senado_sucesso:
+                salvar_checkpoint_transacao(script_senadores, f"CONCLUIDO_{data_hoje}")
+                db.commit()
+                print(f" [+] Carga do Senado Federal consolidada com sucesso!")
+            else:
+                db.rollback()
 
+    except KeyboardInterrupt:
+        print("\n [!] Execução interrompida durante a carga do Senado. Efetuando Rollback...")
+        if db.in_transaction:
+            db.rollback()
 
 print("\n" + "="*50)
-print(" IMPORTAÇÃO CONCLUÍDA")
+print("              IMPORTAÇÃO CONCLUÍDA")
 print("="*50)
-print(f" Deputados: {total_deputados}")
-print(f" Senadores: {total_senadores}")
-print(f" Total: {total_deputados + total_senadores}")
+print(f" -> Deputados gravados nesta chamada: {total_deputados_execucao}")
+print(f" -> Senadores gravados nesta chamada: {total_senadores_execucao}")
 print("="*50)
 
-
-print("\n🔍 Testando dados:")
+print("\n[+] Efetuando teste de amostragem no banco:")
 cursor.execute("""
-    SELECT nomeUrna, dataNascimento, telefone, enderecoGabinete
+    SELECT nomeUrna, cargo, partidoAtual, uf, dataNascimento
     FROM parlamentar
-    LIMIT 10
+    ORDER BY idParlamentar DESC
+    LIMIT 3
 """)
 
 for row in cursor.fetchall():
-    print(row)
+    print(f"  - {row}")
 
 cursor.close()
 db.close()
-print("\n🔌 Conexão encerrada")
+print("\n[+] Conexão com o SGBD encerrada de forma segura. [FIM]")
