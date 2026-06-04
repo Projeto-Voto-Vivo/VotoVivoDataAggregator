@@ -7,6 +7,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 
 try:
     db = mysql.connector.connect(
@@ -93,17 +95,20 @@ def processar_despesas_senado_em_bloco(ano):
 
 deputados = [p for p in parlamentares_db if p[2] == 'Deputado Federal']
 
+if is_test_mode:
+    deputados = deputados[:5]
+    print("[MODO TESTE] Limitando a 5 deputados.")
+
 try:
     for ano in ANOS_BUSCA:
         print(f"\n--- INICIANDO PROCESSAMENTO DO ANO {ano} ---")
 
-        
         print(f"[CÂMARA] Analisando despesas para {len(deputados)} deputados...")
-        
-        
+
         checkpoint_camara_atual = obter_ultimo_checkpoint(script_camara, default_value="0_0")
         ano_chk, id_interno_chk = map(int, checkpoint_camara_atual.split('_'))
 
+        start_time = time.time()
         for id_api, id_interno, _ in tqdm(deputados, desc=f"Deputados {ano}"):
             
             
@@ -140,7 +145,10 @@ try:
             salvar_checkpoint_transacao(script_camara, f"{ano}_{id_interno}")
             db.commit()
 
-        
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                print(f"\n[LIMITE DE TEMPO] Câmara interrompida após {tempo_limite_segundos}s.")
+                break
+
         print(f"[SENADO] Analisando lote de despesas dos senadores...")
         checkpoint_senado_atual = obter_ultimo_checkpoint(script_senado, default_value="0")
         

@@ -10,6 +10,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
 TIPOS_PERMITIDOS = {
     "PDC", "PL", "PLP", "MPV", "PLV", "PDL", "PEC", "VET",
     "PLS", "PLC", "PDS",
@@ -172,6 +175,7 @@ def importar_camara_mes(ano, mes):
     total_inseridos_mes = 0
     paginas_sem_novos = 0
     MAX_PAGINAS_SEM_NOVOS = 5
+    start_time = time.time()
 
     while True:
         params["pagina"] = pagina
@@ -233,17 +237,24 @@ def importar_camara_mes(ano, mes):
             pagina += 1
             time.sleep(0.2)
 
+            if is_test_mode:
+                print("[MODO TESTE] Primeira página processada. Encerrando mês.")
+                break
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                print(f"\n[LIMITE DE TEMPO] Câmara interrompida após {tempo_limite_segundos}s na página {pagina}.")
+                break
+
         except Exception as e:
             print(f"       [!] Erro crítico na execução da página {pagina}: {e}")
             if db.in_transaction:
                 db.rollback()
             break
-            
+
     if db.in_transaction: db.commit()
     db.start_transaction()
     salvar_checkpoint_transacao(script_camara, f"{mes + 1}_1")
     db.commit()
-    
+
     return total_inseridos_mes
 
 def importar_senado_mes(ano, mes):
@@ -275,7 +286,8 @@ def importar_senado_mes(ano, mes):
     total_inseridos_mes = 0
     paginas_sem_insercao = 0
     MAX_PAGINAS_SEM_INSERCAO = 10
-    
+    start_time = time.time()
+
     while True:
         params["pagina"] = pagina
         print(f"     -> Lendo Página {pagina} da API do Senado...")
@@ -375,13 +387,20 @@ def importar_senado_mes(ano, mes):
             
             pagina += 1
             time.sleep(0.5)
-        
+
+            if is_test_mode:
+                print("[MODO TESTE] Primeira página processada. Encerrando mês.")
+                break
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                print(f"\n[LIMITE DE TEMPO] Senado interrompido após {tempo_limite_segundos}s na página {pagina}.")
+                break
+
         except Exception as e:
             print(f"       [!] Erro crítico na execução da página {pagina}: {e}")
             if db.in_transaction:
                 db.rollback()
             break
-            
+
     if db.in_transaction: db.commit()
     db.start_transaction()
     salvar_checkpoint_transacao(script_senado, f"{mes + 1}_1")

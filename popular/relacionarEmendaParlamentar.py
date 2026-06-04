@@ -1,5 +1,6 @@
 import os
 import re
+import time
 import unicodedata
 
 import mysql.connector
@@ -7,6 +8,9 @@ from dotenv import load_dotenv
 
 
 load_dotenv()
+
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 
 MESES = [
     int(mes.strip())
@@ -239,6 +243,10 @@ else:
 parlamentares_por_nome = buscar_parlamentares_indexados()
 emendas = buscar_emendas_para_relacionar()
 
+if is_test_mode:
+    emendas = emendas[:10]
+    print("[MODO TESTE] Limitando a 10 emendas.")
+
 print(f"Total de nomes indexados: {len(parlamentares_por_nome)}")
 print(f"Total de emendas para analisar: {len(emendas)}")
 
@@ -249,6 +257,7 @@ contador_nao_aplicavel = 0
 contador_sem_nome_autor = 0
 contador_erros = 0
 
+start_time = time.time()
 for emenda in emendas:
     id_emenda = emenda["idEmenda"]
     codigo_emenda = emenda["codigoEmenda"]
@@ -315,6 +324,10 @@ for emenda in emendas:
         db.rollback()
         contador_erros += 1
         print(f"Erro ao relacionar emenda {codigo_emenda}: {e}")
+
+    if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+        print(f"\n[LIMITE DE TEMPO] Interrompido após {tempo_limite_segundos}s.")
+        break
 
 print("\n" + "=" * 60)
 print("Relacionamento concluído")

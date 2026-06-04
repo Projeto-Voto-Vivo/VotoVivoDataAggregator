@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
 db = mysql.connector.connect(
     host=os.getenv("DB_HOST", "localhost"),
     user=os.getenv("DB_USER", "root"),
@@ -35,9 +38,14 @@ try:
     
     if response.status_code == 200:
         partidos = response.json()["dados"]
-        
+
+        if is_test_mode:
+            partidos = partidos[:5]
+            print("[MODO TESTE] Limitando a 5 partidos.")
+
         print(f" Encontrados {len(partidos)} partidos\n")
-        
+
+        start_time = time.time()
         for partido in partidos:
             id_partido_api = partido.get('id')
             
@@ -68,7 +76,11 @@ try:
                 nome = detalhe.get('nome') or 'Sem nome'
                 print(f"✔ [{total_partidos:2d}] {sigla:15s} - {nome}")
                 
-                time.sleep(0.1)  
+                time.sleep(0.1)
+
+                if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                    print(f"\n[LIMITE DE TEMPO] Interrompido após {tempo_limite_segundos}s.")
+                    break
             else:
                 print(f" Erro ao buscar detalhes do partido ID {id_partido_api}")
         

@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
 try:
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST"),
@@ -123,6 +126,11 @@ cursor.execute("""
 proposicoes = cursor.fetchall()
 total = 0
 
+if is_test_mode:
+    proposicoes = proposicoes[:10]
+    print("[MODO TESTE] Limitando a 10 proposições do Senado.")
+
+start_time = time.time()
 try:
     for i, (id_prop, id_api, sigla, numero, ano) in enumerate(proposicoes, 1):
         if id_prop <= checkpoint_senado_atual:
@@ -144,6 +152,10 @@ try:
 
         salvar_checkpoint_transacao(script_senado, id_prop)
         db.commit()
+
+        if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+            print(f"\n[LIMITE DE TEMPO] Senado interrompido após {tempo_limite_segundos}s.")
+            break
 
         if i % 10 == 0:
             print(f"Senado {i}/{len(proposicoes)} {total}")
@@ -169,6 +181,11 @@ cursor.execute("""
 proposicoes = cursor.fetchall()
 total_camara = 0
 
+if is_test_mode:
+    proposicoes = proposicoes[:10]
+    print("[MODO TESTE] Limitando a 10 proposições da Câmara.")
+
+start_time = time.time()
 try:
     for i, (id_prop, id_api, sigla, numero, ano) in enumerate(proposicoes, 1):
         if id_prop <= checkpoint_camara_atual:
@@ -190,6 +207,10 @@ try:
 
         salvar_checkpoint_transacao(script_camara, id_prop)
         db.commit()
+
+        if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+            print(f"\n[LIMITE DE TEMPO] Câmara interrompida após {tempo_limite_segundos}s.")
+            break
 
         if i % 200 == 0:
             print(f"Camara {i}/{len(proposicoes)} {total_camara}")

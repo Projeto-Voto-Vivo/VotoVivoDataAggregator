@@ -5,6 +5,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 
 db = mysql.connector.connect(
     host=os.getenv("DB_HOST", "localhost"),
