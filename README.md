@@ -35,11 +35,28 @@ cp .env.example .env
 
 ## Banco de dados
 
-Execute o schema para criar as tabelas antes de rodar qualquer script:
+### Banco de produção
+
+Cria o schema e executa todos os 19 scripts de população na ordem correta:
 
 ```bash
-mysql -u <usuario> -p < popular/schema.sql
+python popular/setup_banco.py                # cria schema + popula
+python popular/setup_banco.py --force        # recria o schema sem perguntar
+python popular/setup_banco.py --sem-schema   # pula a criação do schema
 ```
+
+### Banco de testes
+
+Cria o schema e executa todos os scripts com `TEST_MODE=True`, gerando um dataset reduzido para desenvolvimento:
+
+```bash
+python popular/seed_teste.py                 # tempo padrão de 60s por script
+python popular/seed_teste.py --tempo 30      # limita cada script a 30s
+python popular/seed_teste.py --force         # recria o schema sem perguntar
+python popular/seed_teste.py --sem-schema    # pula a criação do schema
+```
+
+Cada script respeita `TEST_MODE` limitando o número de registros processados por iteração e `MAX_TIME_SECONDS` interrompendo o loop quando o tempo máximo é atingido.
 
 ## Scripts
 
