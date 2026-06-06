@@ -5,14 +5,14 @@ import time
 import sys
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 try:
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST", "localhost"),
         user=os.getenv("DB_USER", "test"),
         password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
+        database=os.getenv("DB_NAME", "votovivo")
     )
     cursor = db.cursor()
 except mysql.connector.Error:

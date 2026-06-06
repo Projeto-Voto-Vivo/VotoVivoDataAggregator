@@ -3,14 +3,14 @@ import mysql.connector
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 
 db = mysql.connector.connect(
     host=os.getenv("DB_HOST", "localhost"),
     user=os.getenv("DB_USER", "root"),
-    password=os.getenv("DB_PASSWORD", ""),
-    database=os.getenv("DB_NAME", "votoVivo")
+    password=os.getenv("DB_PASSWORD", "senha123"),
+    database=os.getenv("DB_NAME", "votovivo")
 )
 cursor = db.cursor(buffered=True)
 

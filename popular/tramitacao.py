@@ -6,7 +6,7 @@ import sys
 from tqdm import tqdm
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 BASE_URL = "https://dadosabertos.camara.leg.br/api/v2"
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
@@ -17,7 +17,7 @@ try:
         host=os.getenv("DB_HOST", "localhost"),
         user=os.getenv("DB_USER", "root"),
         password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
+        database=os.getenv("DB_NAME", "votovivo")
     )
     cursor = db.cursor()
 except mysql.connector.Error:

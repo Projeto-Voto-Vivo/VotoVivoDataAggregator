@@ -6,7 +6,7 @@ import sys
 from tqdm import tqdm
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
@@ -16,7 +16,7 @@ try:
         host=os.getenv("DB_HOST", "localhost"),
         user=os.getenv("DB_USER", "root"),
         password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
+        database=os.getenv("DB_NAME", "votovivo")
     )
     cursor = db.cursor(buffered=True)
 except mysql.connector.Error:

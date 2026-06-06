@@ -1,5 +1,5 @@
-CREATE DATABASE IF NOT EXISTS votoVivo;
-USE votoVivo;
+CREATE DATABASE IF NOT EXISTS votovivo;
+USE votovivo;
 
 
 CREATE TABLE etlCheckpoint (

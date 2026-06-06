@@ -6,7 +6,7 @@ from tqdm import tqdm
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
@@ -18,8 +18,8 @@ try:
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST", "localhost"),
         user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
+        password=os.getenv("DB_PASSWORD", "senha123"),
+        database=os.getenv("DB_NAME", "votovivo")
     )
     cursor = db.cursor()
     cursor.execute("SELECT DATABASE()")
@@ -47,7 +47,7 @@ sql_check_existe = "SELECT 1 FROM parlamentar WHERE idApi = %s"
 
 sql_insert = """
     INSERT INTO parlamentar 
-    (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telephone, enderecoGabinete)
+    (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete)
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
@@ -57,7 +57,7 @@ sql_update = """
         partidoAtual = %s,
         fotoUrl = %s,
         email = %s,
-        telephone = %s,
+        telefone = %s,
         enderecoGabinete = %s,
         dataNascimento = %s
     WHERE idApi = %s

@@ -8,7 +8,7 @@ from urllib3.util.retry import Retry
 from datetime import datetime
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
 TIPOS_PERMITIDOS = {
     "PDC", "PL", "PLP", "MPV", "PLV", "PDL", "PEC", "VET",
@@ -29,7 +29,7 @@ retries = Retry(
 session.mount('https://', HTTPAdapter(max_retries=retries))
 
 ANO = 2025
-MESES = list(range(7, 10))
+MESES = list(range(7, 12))
 
 NOMES_MESES = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -44,8 +44,8 @@ try:
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST", "localhost"),
         user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
+        password=os.getenv("DB_PASSWORD", "senha123"),
+        database=os.getenv("DB_NAME", "votovivo")
     )
     cursor = db.cursor(buffered=True)
     print("[+] Conexão com o banco de dados estabelecida com sucesso.\n")
@@ -202,7 +202,7 @@ def importar_camara_mes(ano, mes):
                 if not tipo_permitido(sigla, "Camara"):
                     continue
                 
-                id_tipo = garantizar_tipo(sigla, "Camara")
+                id_tipo = garantir_tipo(sigla, "Camara")
 
                 cursor.execute("""
                     INSERT IGNORE INTO proposicao
@@ -336,7 +336,7 @@ def importar_senado_mes(ano, mes):
                 if not tipo_permitido(sigla, "Senado"):
                     continue
                 
-                id_tipo = garantizar_tipo(sigla, "Senado")
+                id_tipo = garantir_tipo(sigla, "Senado")
                 
                 cursor.execute("SELECT 1 FROM proposicao WHERE idApi = %s", (id_api,))
                 if cursor.fetchone():
