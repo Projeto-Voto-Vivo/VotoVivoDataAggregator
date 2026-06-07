@@ -206,7 +206,7 @@ def importar_camara_mes(ano, mes):
                 if not tipo_permitido(sigla, "Camara"):
                     continue
                 
-                id_tipo = garantizar_tipo(sigla, "Camara")
+                id_tipo = garantir_tipo(sigla, "Camara")
 
                 cursor.execute("""
                     INSERT IGNORE INTO proposicao
@@ -237,9 +237,6 @@ def importar_camara_mes(ano, mes):
             pagina += 1
             time.sleep(0.2)
 
-            if is_test_mode:
-                print("[MODO TESTE] Primeira página processada. Encerrando mês.")
-                break
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
                 print(f"\n[LIMITE DE TEMPO] Câmara interrompida após {tempo_limite_segundos}s na página {pagina}.")
                 break
@@ -348,7 +345,7 @@ def importar_senado_mes(ano, mes):
                 if not tipo_permitido(sigla, "Senado"):
                     continue
                 
-                id_tipo = garantizar_tipo(sigla, "Senado")
+                id_tipo = garantir_tipo(sigla, "Senado")
                 
                 cursor.execute("SELECT 1 FROM proposicao WHERE idApi = %s", (id_api,))
                 if cursor.fetchone():
@@ -388,9 +385,6 @@ def importar_senado_mes(ano, mes):
             pagina += 1
             time.sleep(0.5)
 
-            if is_test_mode:
-                print("[MODO TESTE] Primeira página processada. Encerrando mês.")
-                break
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
                 print(f"\n[LIMITE DE TEMPO] Senado interrompido após {tempo_limite_segundos}s na página {pagina}.")
                 break

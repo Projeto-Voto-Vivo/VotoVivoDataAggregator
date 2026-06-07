@@ -85,9 +85,6 @@ def importar_votacoes_camara():
         (12, "2025-12-01", "2025-12-31"),
     ]
 
-    if is_test_mode:
-        meses_mapeados = [(8, "2025-08-01", "2025-08-31")]
-
     checkpoint_atual = obter_ultimo_checkpoint(script_camara, default_value="1_1")
     mes_chk, pagina_chk = map(int, checkpoint_atual.split('_'))
 
@@ -95,10 +92,10 @@ def importar_votacoes_camara():
     start_time = time.time()
 
     for num_mes, inicio, fim in meses_mapeados:
-        if num_mes < mes_chk and not is_test_mode:
+        if num_mes < mes_chk:
             continue
 
-        pagina = pagina_chk if (num_mes == mes_chk and not is_test_mode) else 1
+        pagina = pagina_chk if num_mes == mes_chk else 1
 
         while True:
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
@@ -182,7 +179,7 @@ def importar_votacoes_camara():
                 salvar_checkpoint_transacao(script_camara, f"{num_mes}_{pagina}")
                 db.commit()
 
-                if len(dados) < 100 or is_test_mode:
+                if len(dados) < 100:
                     break
                 pagina += 1
                 time.sleep(0.2)
@@ -213,15 +210,12 @@ def importar_votacoes_senado():
     
     checkpoint_senado_atual = int(obter_ultimo_checkpoint(script_senado, default_value="0"))
 
-    if is_test_mode:
-        proposicoes = proposicoes[:5]
-
     headers = {"Accept": "application/json"}
     start_time = time.time()
 
     try:
         for id_proposicao, id_api_materia in tqdm(proposicoes, desc="Matérias Senado"):
-            if id_proposicao <= checkpoint_senado_atual and not is_test_mode:
+            if id_proposicao <= checkpoint_senado_atual:
                 continue
 
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:

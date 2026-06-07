@@ -126,10 +126,6 @@ cursor.execute("""
 proposicoes = cursor.fetchall()
 total = 0
 
-if is_test_mode:
-    proposicoes = proposicoes[:10]
-    print("[MODO TESTE] Limitando a 10 proposições do Senado.")
-
 start_time = time.time()
 try:
     for i, (id_prop, id_api, sigla, numero, ano) in enumerate(proposicoes, 1):
@@ -180,10 +176,6 @@ cursor.execute("""
 
 proposicoes = cursor.fetchall()
 total_camara = 0
-
-if is_test_mode:
-    proposicoes = proposicoes[:10]
-    print("[MODO TESTE] Limitando a 10 proposições da Câmara.")
 
 start_time = time.time()
 try:

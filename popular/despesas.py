@@ -95,10 +95,6 @@ def processar_despesas_senado_em_bloco(ano):
 
 deputados = [p for p in parlamentares_db if p[2] == 'Deputado Federal']
 
-if is_test_mode:
-    deputados = deputados[:5]
-    print("[MODO TESTE] Limitando a 5 deputados.")
-
 try:
     for ano in ANOS_BUSCA:
         print(f"\n--- INICIANDO PROCESSAMENTO DO ANO {ano} ---")

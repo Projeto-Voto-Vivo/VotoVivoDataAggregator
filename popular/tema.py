@@ -26,10 +26,6 @@ def popular_temas_camara():
     res = requests.get(url).json()
 
     dados = res.get("dados", [])
-    if is_test_mode:
-        dados = dados[:10]
-        print("[MODO TESTE] Limitando a 10 temas da Câmara.")
-
     for t in dados:
         cursor.execute("""
             INSERT IGNORE INTO tema (codigoExterno, casa, descricao, nivel)
@@ -47,10 +43,6 @@ def popular_assuntos_senado():
     else:
         assuntos_data = res.get("assuntos", [])
         assuntos = assuntos_data if isinstance(assuntos_data, list) else assuntos_data.get("assunto", [])
-
-    if is_test_mode:
-        assuntos = assuntos[:10]
-        print("[MODO TESTE] Limitando a 10 assuntos do Senado.")
 
     for a in assuntos:
         cursor.execute("""

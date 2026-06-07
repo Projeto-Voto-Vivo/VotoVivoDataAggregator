@@ -46,18 +46,18 @@ def salvar_checkpoint_transacao(nome_script, valor_parametro):
 sql_check_existe = "SELECT 1 FROM parlamentar WHERE idApi = %s"
 
 sql_insert = """
-    INSERT INTO parlamentar 
-    (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telephone, enderecoGabinete)
+    INSERT INTO parlamentar
+    (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete)
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
 sql_update = """
-    UPDATE parlamentar SET 
+    UPDATE parlamentar SET
         cargo = %s,
         partidoAtual = %s,
         fotoUrl = %s,
         email = %s,
-        telephone = %s,
+        telefone = %s,
         enderecoGabinete = %s,
         dataNascimento = %s
     WHERE idApi = %s
@@ -76,7 +76,20 @@ if pagina > 1:
 try:
     while True:
         response = requests.get(url_camara, params={"pagina": pagina, "itens": 100}, timeout=20)
-        dados = response.json().get("dados", [])
+
+        if response.status_code != 200 or not response.text.strip():
+            print(" [+] Fim da paginação da API da Câmara atingido.")
+            if db.in_transaction:
+                db.commit()
+            break
+
+        try:
+            dados = response.json().get("dados", [])
+        except Exception:
+            print(f" [!] Resposta inválida da API na página {pagina}. Encerrando Câmara.")
+            if db.in_transaction:
+                db.commit()
+            break
 
         if not dados:
             print(" [+] Fim da paginação da API da Câmara atingido.")

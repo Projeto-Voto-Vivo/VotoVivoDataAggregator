@@ -54,9 +54,6 @@ def vincular_camara():
     checkpoint_atual = int(obter_ultimo_checkpoint(chk_camara, default_value="0"))
     fila_props = [p for p in props if p[0] > checkpoint_atual]
 
-    if is_test_mode:
-        fila_props = fila_props[:5]
-
     start_time = time.time()
 
     for id_interno, id_api in tqdm(fila_props, desc="Temas Câmara"):
@@ -90,9 +87,6 @@ def vincular_senado():
 
     checkpoint_atual = int(obter_ultimo_checkpoint(chk_senado, default_value="0"))
     fila_props = [p for p in props if p[0] > checkpoint_atual]
-
-    if is_test_mode:
-        fila_props = fila_props[:5]
 
     start_time = time.time()
 

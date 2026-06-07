@@ -25,7 +25,6 @@ TEMPO_PADRAO   = 60  # segundos por script
 
 SCRIPTS_ORDEM = [
     "parlamentar.py",
-    "partidos.py",
     "redeSocial.py",
     "gabinete.py",
     "tipoProposicao.py",
@@ -39,7 +38,6 @@ SCRIPTS_ORDEM = [
     "tipoTramitacao.py",
     "orgao.py",
     "tramitacao.py",
-    "historico.py",
     "emenda.py",
     "relacionarEmendaParlamentar.py",
     "presenca.py",

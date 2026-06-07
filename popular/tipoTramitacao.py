@@ -46,9 +46,6 @@ def importar_tipo_tramitacao():
     checkpoint_atual = int(obter_ultimo_checkpoint(script_checkpoint, default_value="0"))
     fila_proposicoes = [p for p in proposicoes_banco if p[0] > checkpoint_atual]
 
-    if is_test_mode:
-        fila_proposicoes = fila_proposicoes[:5]
-
     start_time = time.time()
 
     for id_interno, id_api in tqdm(fila_proposicoes, desc="Importando tipos", unit="proposição"):

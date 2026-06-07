@@ -243,10 +243,6 @@ else:
 parlamentares_por_nome = buscar_parlamentares_indexados()
 emendas = buscar_emendas_para_relacionar()
 
-if is_test_mode:
-    emendas = emendas[:10]
-    print("[MODO TESTE] Limitando a 10 emendas.")
-
 print(f"Total de nomes indexados: {len(parlamentares_por_nome)}")
 print(f"Total de emendas para analisar: {len(emendas)}")
 

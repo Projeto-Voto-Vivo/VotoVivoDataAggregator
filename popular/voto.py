@@ -57,16 +57,12 @@ def importar_votos_camara():
     
     checkpoint_atual = int(obter_ultimo_checkpoint(script_camara, default_value="0"))
     
-    if is_test_mode:
-        votacoes = [v for v in votacoes if v[1] > checkpoint_atual][:5]
-        print("[MODO TESTE] Limitando a 5 votações nominais da Câmara.")
-
     total_votos = 0
     start_time = time.time()
 
     try:
         for id_api_votacao, id_votacao in tqdm(votacoes, desc="Votos Câmara"):
-            if id_votacao <= checkpoint_atual and not is_test_mode:
+            if id_votacao <= checkpoint_atual:
                 continue
 
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
@@ -136,17 +132,13 @@ def importar_votos_senado():
 
     checkpoint_atual = int(obter_ultimo_checkpoint(script_senado, default_value="0"))
 
-    if is_test_mode:
-        votacoes_senado = [v for v in votacoes_senado if v[1] > checkpoint_atual][:5]
-        print("[MODO TESTE] Limitando a 5 votações nominais do Senado.")
-
     total_votos = 0
     start_time = time.time()
     headers = {"Accept": "application/json"}
 
     materias = {}
     for id_api_votacao, id_votacao, id_api_materia in votacoes_senado:
-        if id_votacao <= checkpoint_atual and not is_test_mode:
+        if id_votacao <= checkpoint_atual:
             continue
         if id_api_materia not in materias:
             materias[id_api_materia] = []

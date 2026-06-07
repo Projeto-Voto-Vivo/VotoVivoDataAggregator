@@ -41,10 +41,6 @@ ultimo_id_interno_chk = int(obter_ultimo_checkpoint(script_redes, default_value=
 cursor.execute("SELECT idApi, idParlamentar FROM parlamentar ORDER BY idParlamentar ASC")
 deputados_db = cursor.fetchall()
 
-if is_test_mode:
-    deputados_db = deputados_db[:10]
-    print("[MODO TESTE] Limitando a 10 parlamentares.")
-
 contador_redes = 0
 contador_parlamentares_com_redes = 0
 
