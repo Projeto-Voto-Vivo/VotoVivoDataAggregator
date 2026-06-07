@@ -153,9 +153,8 @@ def importar_votacoes_camara():
 
                         resumo = v_detalhe.get("descricao")
                         
-                        efeitos = v_detalhe.get("efeitosRegistrados", [])
-                        descricao_lower = (resumo or "").lower()
-                        if "nominal" in descricao_lower or any("voto" in e.get("descEfeito", "").lower() for e in efeitos):
+                        tipo_api = (v_detalhe.get("tipoVotacao") or "").upper()
+                        if tipo_api == "NOMINAL":
                             tipo = "NOMINAL"
                         else:
                             tipo = "SIMBOLICA"
