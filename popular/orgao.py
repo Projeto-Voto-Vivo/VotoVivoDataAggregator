@@ -1,10 +1,11 @@
 import os
-import requests
-import mysql.connector
+import sys
 import time
-from tqdm import tqdm
 from datetime import datetime
 from dotenv import load_dotenv
+import mysql.connector
+import requests
+from tqdm import tqdm
 
 load_dotenv()
 
@@ -14,20 +15,18 @@ tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 BASE_URL_CAMARA = "https://dadosabertos.camara.leg.br/api/v2"
 BASE_URL_SENADO = "https://legis.senado.leg.br/dadosabertos"
 
-
 try:
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST", "localhost"),
         user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),  
-        database=os.getenv("DB_NAME", "votoVivo")
+        password=os.getenv("DB_PASSWORD", ""),
+        database=os.getenv("DB_NAME", "votoVivo"),
     )
     cursor = db.cursor()
     print("[+] Conexão com o banco de dados estabelecida com sucesso.\n")
 except mysql.connector.Error as err:
     print(f"[!] Erro ao conectar ao banco: {err}")
-    exit(1)
-
+    sys.exit(1)
 
 
 def obter_ultimo_checkpoint(nome_script, default_value="0"):
@@ -36,8 +35,8 @@ def obter_ultimo_checkpoint(nome_script, default_value="0"):
     resultado = cursor.fetchone()
     return resultado[0] if resultado else default_value
 
+
 def salvar_checkpoint_transacao(nome_script, valor_parametro):
-    
     query = """
         INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
         VALUES (%s, %s)
@@ -46,21 +45,18 @@ def salvar_checkpoint_transacao(nome_script, valor_parametro):
     cursor.execute(query, (nome_script, str(valor_parametro)))
 
 
-
-script_camara = "popular/orgao.py#camara"
-script_senado = "popular/orgao.py#senado"
-
+script_camara = "popular/orgao.py#camara_25_26"
+script_senado = "popular/orgao.py#senado_25_26"
 
 
 def extrair_id_orgao(uri):
-    """Extrai o ID da Câmara do final da URI"""
     try:
         return str(int(uri.split("/")[-1]))
     except:
         return None
 
+
 def buscar_nome_orgao(id_api):
-    """Busca o nome descritivo do órgão na API da Câmara"""
     try:
         url = f"{BASE_URL_CAMARA}/orgaos/{id_api}"
         r = requests.get(url, timeout=10)
@@ -72,54 +68,63 @@ def buscar_nome_orgao(id_api):
     return None
 
 
-
 def importar_orgaos_camara():
-    """Importa órgãos lendo as tramitações da Câmara com suporte a checkpoint sequencial"""
     print("[*] Iniciando análise de órgãos pela Câmara dos Deputados...")
-    
-    
-    ultimo_id_proposicao_chk = int(obter_ultimo_checkpoint(script_camara, default_value="0"))
 
-    
+    ultimo_id_proposicao_chk = int(
+        obter_ultimo_checkpoint(script_camara, default_value="0")
+    )
+
     cursor.execute("""
         SELECT p.idApi FROM proposicao p
         JOIN tipoProposicao t ON p.idTipoProposicao = t.idTipoProposicao
-        WHERE t.casa = 'Camara' OR t.casa = 'Congresso'
+        WHERE (t.casa = 'Camara' OR t.casa = 'Congresso') AND p.ano IN (2025, 2026)
         ORDER BY p.idApi ASC
     """)
     proposicoes = cursor.fetchall()
 
     if is_test_mode:
         limite_itens = 20
-        print(f" [i] MODO TESTE ATIVO: Limitando verificação a 20 proposições na Câmara.")
+        print(
+            f" [i] MODO TESTE ATIVO: Limitando verificação a 20 proposições na Câmara."
+        )
         proposicoes = proposicoes[:limite_itens]
 
     total = len(proposicoes)
     print(f"Total de proposições a avaliar no banco: {total}")
     if ultimo_id_proposicao_chk > 0 and not is_test_mode:
-        print(f" [i] Checkpoint ativo: Pulando automaticamente até a proposição da API de ID {ultimo_id_proposicao_chk}...")
-    
+        print(
+            f" [i] Checkpoint ativo: Pulando automaticamente até a proposição da API de ID {ultimo_id_proposicao_chk}..."
+        )
+
     start_time = time.time()
     contador_novos_orgaos = 0
 
     try:
-        for (id_api,) in tqdm(proposicoes, desc="Processando órgãos (Câmara)", unit="proposição"):
-            
-            
+        for (id_api,) in tqdm(
+            proposicoes,
+            desc="Processando órgãos (Câmara)",
+            unit="proposição",
+        ):
             if id_api <= ultimo_id_proposicao_chk and not is_test_mode:
                 continue
 
-            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
-                print(f"\n [!] Limite de tempo esgotado ({tempo_limite_segundos}s). Interrompendo processamento da Câmara.")
+            if (
+                tempo_limite_segundos > 0
+                and (time.time() - start_time) > tempo_limite_segundos
+            ):
+                print(
+                    f"\n [!] Limite de tempo esgotado ({tempo_limite_segundos}s). Interrompendo processamento da Câmara."
+                )
                 break
-                
+
             try:
                 url = f"{BASE_URL_CAMARA}/proposicoes/{id_api}/tramitacoes"
                 res = requests.get(url, timeout=10)
 
                 if res.status_code != 200:
-                    
-                    if db.in_transaction: db.commit()
+                    if db.in_transaction:
+                        db.commit()
                     db.start_transaction()
                     salvar_checkpoint_transacao(script_camara, id_api)
                     db.commit()
@@ -136,125 +141,151 @@ def importar_orgaos_camara():
                     if id_orgao_api and id_orgao_api not in orgaos_unicos:
                         orgaos_unicos[id_orgao_api] = (sigla or "N/A")[:50]
 
-                
                 if db.in_transaction:
                     db.commit()
 
-                
                 db.start_transaction()
 
                 for id_orgao_api, sigla in orgaos_unicos.items():
                     cursor.execute(
                         "SELECT idOrgao, nome FROM orgao WHERE idApi = %s AND casa = 'Camara'",
-                        (id_orgao_api,)
+                        (id_orgao_api,),
                     )
                     existente = cursor.fetchone()
 
                     if existente:
-                        if not existente[1]:  
+                        if not existente[1]:
                             nome = buscar_nome_orgao(id_orgao_api)
                             if nome:
-                                cursor.execute("""
+                                cursor.execute(
+                                    """
                                     UPDATE orgao SET nome = %s WHERE idApi = %s AND casa = 'Camara'
-                                """, (nome, id_orgao_api))
+                                """,
+                                    (nome, id_orgao_api),
+                                )
                     else:
                         nome = buscar_nome_orgao(id_orgao_api)
-                        cursor.execute("""
-                            INSERT INTO orgao (idApi, sigla, nome, casa)
+                        cursor.execute(
+                            """
+                            INSERT IGNORE INTO orgao (idApi, sigla, nome, casa)
                             VALUES (%s, %s, %s, 'Camara')
-                        """, (id_orgao_api, sigla, nome))
+                        """,
+                            (id_orgao_api, sigla, nome),
+                        )
                         contador_novos_orgaos += 1
 
-                
                 salvar_checkpoint_transacao(script_camara, id_api)
                 db.commit()
                 time.sleep(0.1)
 
             except Exception as e:
-                print(f"\n [!] Erro de processamento na proposição {id_api}: {e}")
+                print(
+                    f"\n [!] Erro de processamento na proposição {id_api}: {e}"
+                )
                 if db.in_transaction:
                     db.rollback()
 
     except KeyboardInterrupt:
-        print("\n [!] Execução interrompida via teclado (Ctrl+C). Aplicando Rollback de segurança nos lotes da Câmara...")
+        print(
+            "\n [!] Execução interrompida via teclado (Ctrl+C). Aplicando Rollback de segurança nos lotes da Câmara..."
+        )
         if db.in_transaction:
             db.rollback()
 
 
-
 def importar_orgaos_senado():
-    """Importa todos os colegiados ativos do Senado Federal usando trava diária de checkpoint"""
     print("\n[*] Iniciando importação dos colegiados/comissões do Senado...")
-    
-    checkpoint_senado_atual = obter_ultimo_checkpoint(script_senado, default_value="PENDENTE")
+
+    checkpoint_senado_atual = obter_ultimo_checkpoint(
+        script_senado, default_value="PENDENTE"
+    )
     data_hoje = datetime.now().strftime("%Y-%m-%d")
 
     if checkpoint_senado_atual == f"CONCLUIDO_{data_hoje}" and not is_test_mode:
-        print(" [i] Carga de comissões do Senado já realizada com sucesso hoje. Pulando etapa.")
+        print(
+            " [i] Carga de comissões do Senado já realizada com sucesso hoje. Pulando etapa."
+        )
         return
 
     url = f"{BASE_URL_SENADO}/comissao/lista/colegiados"
     headers = {"Accept": "application/json"}
-    
+
     try:
         res = requests.get(url, headers=headers, timeout=15)
         if res.status_code == 200:
             dados = res.json()
-            comissoes = dados.get("ListaColegiados", {}).get("Colegiados", {}).get("Colegiado", [])
-            
+            comissoes = (
+                dados.get("ListaColegiados", {})
+                .get("Colegiados", {})
+                .get("Colegiado", [])
+            )
+
             if isinstance(comissoes, dict):
                 comissoes = [comissoes]
-                
+
             if is_test_mode:
                 limite_itens = 5
-                print(f" [i] MODO TESTE ATIVO: Limitando importação a 5 colegiados no Senado.")
+                print(
+                    f" [i] MODO TESTE ATIVO: Limitando importação a 5 colegiados no Senado."
+                )
                 comissoes = comissoes[:limite_itens]
 
             if db.in_transaction:
                 db.commit()
 
-            
             db.start_transaction()
 
             for c in comissoes:
                 id_api = str(c.get("Codigo"))
                 sigla = c.get("Sigla", "N/A")[:50]
-                nome = c.get("Nome", "Sem Nome")[:500] 
+                nome = c.get("Nome", "Sem Nome")[:500]
                 sigla_casa = c.get("SiglaCasa", "")
-                
+
                 if sigla_casa == "CN":
                     casa = "Congresso"
                 elif sigla_casa == "SF":
                     casa = "Senado"
                 else:
-                    casa = 'Congresso' if 'Mista' in nome or 'Misto' in nome else 'Senado'
+                    casa = (
+                        "Congresso"
+                        if "Mista" in nome or "Misto" in nome
+                        else "Senado"
+                    )
 
-                
-                cursor.execute("""
+                cursor.execute(
+                    """
                     INSERT INTO orgao (idApi, sigla, nome, casa)
                     VALUES (%s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         sigla = VALUES(sigla),
                         nome = VALUES(nome),
                         casa = VALUES(casa)
-                """, (id_api, sigla, nome, casa))
-            
-            
-            salvar_checkpoint_transacao(script_senado, f"CONCLUIDO_{data_hoje}")
+                """,
+                    (id_api, sigla, nome, casa),
+                )
+
+            salvar_checkpoint_transacao(
+                script_senado, f"CONCLUIDO_{data_hoje}"
+            )
             db.commit()
-            print(f" [+] Sucesso! {len(comissoes)} órgãos do Senado Federal gravados.")
+            print(
+                f" [+] Sucesso! {len(comissoes)} órgãos do Senado Federal gravados."
+            )
         else:
-            print(f" [!] Erro ao buscar comissões do Senado: Status {res.status_code}")
-            
+            print(
+                f" [!] Erro ao buscar comissões do Senado: Status {res.status_code}"
+            )
+
     except Exception as e:
         print(f" [!] Erro na importação do Senado: {e}")
         if db.in_transaction:
             db.rollback()
     except KeyboardInterrupt:
-        print("\n [!] Interrupção detectada durante a carga do Senado. Cancelando lote...")
+        print(
+            "\n [!] Interrupção detectada durante a carga do Senado. Cancelando lote..."
+        )
         if db.in_transaction:
             db.rollback()
-
 
 
 if __name__ == "__main__":

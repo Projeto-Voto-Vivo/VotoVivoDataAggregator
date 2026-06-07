@@ -47,7 +47,7 @@ sql_check_existe = "SELECT 1 FROM parlamentar WHERE idApi = %s"
 
 sql_insert = """
     INSERT INTO parlamentar 
-    (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telephone, enderecoGabinete)
+    (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete)
     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
 """
 
