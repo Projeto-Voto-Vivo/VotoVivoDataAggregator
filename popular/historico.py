@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
 db = mysql.connector.connect(
     host=os.getenv("DB_HOST", "localhost"),
     user=os.getenv("DB_USER", "root"),
@@ -23,6 +26,10 @@ print("=" * 80)
 cursor.execute("SELECT idDeputado FROM Deputado")
 deputados_db = cursor.fetchall()
 
+if is_test_mode:
+    deputados_db = deputados_db[:5]
+    print("[MODO TESTE] Limitando a 5 deputados.")
+
 print(f"\n Total de deputados no banco: {len(deputados_db)}")
 print(" Iniciando importação de histórico...\n")
 
@@ -32,6 +39,7 @@ deputados_com_historico = 0
 partidos_nao_encontrados = set()
 gabinetes_criados = 0
 
+start_time = time.time()
 for (id_deputado,) in deputados_db:
     historicos_deputado = 0
     
@@ -157,8 +165,12 @@ for (id_deputado,) in deputados_db:
         if deputados_processados % 50 == 0:
             print(f"    Progresso: {deputados_processados}/{len(deputados_db)} deputados processados")
         
-        time.sleep(0.1)  
-        
+        time.sleep(0.1)
+
+        if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+            print(f"\n[LIMITE DE TEMPO] Interrompido após {tempo_limite_segundos}s.")
+            break
+
     except Exception as e:
         print(f" Erro ao processar deputado {id_deputado}: {e}")
 

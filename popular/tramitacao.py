@@ -91,9 +91,6 @@ def importar_tramitacao_camara():
     """, (checkpoint_atual,))
     fila_proposicoes = cursor.fetchall()
     
-    if is_test_mode:
-        fila_proposicoes = fila_proposicoes[:5]
-
     start_time = time.time()
 
     for id_interno, id_api in tqdm(fila_proposicoes, desc="Tramitações Câmara"):

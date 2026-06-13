@@ -130,9 +130,6 @@ def importar_presencas_camara():
     )
     fila_deputados = [d for d in deputados_banco if d[1] > checkpoint_atual]
 
-    if is_test_mode:
-        fila_deputados = fila_deputados[:2]
-
     start_time = time.time()
 
     for id_api_dep, id_interno_dep in tqdm(
@@ -244,9 +241,6 @@ def importar_presencas_senado():
         obter_ultimo_checkpoint(chk_senado, default_value="0")
     )
     fila_comissoes = [c for c in comissoes if c[0] > checkpoint_atual]
-
-    if is_test_mode:
-        fila_comissoes = fila_comissoes[:3]
 
     start_time = time.time()
     headers = {"Accept": "application/json"}

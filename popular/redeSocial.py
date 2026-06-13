@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
 try:
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST", "localhost"),
@@ -41,6 +44,7 @@ deputados_db = cursor.fetchall()
 contador_redes = 0
 contador_parlamentares_com_redes = 0
 
+start_time = time.time()
 try:
     for (id_api, id_interno) in deputados_db:
         if id_interno <= ultimo_id_interno_chk:
@@ -92,14 +96,18 @@ try:
                 
                 salvar_checkpoint_transacao(script_redes, id_interno)
                 db.commit()
-            
+
             else:
                 if db.in_transaction:
                     db.commit()
                 db.start_transaction()
                 salvar_checkpoint_transacao(script_redes, id_interno)
                 db.commit()
-            
+
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                print(f"\n[LIMITE DE TEMPO] Interrompido após {tempo_limite_segundos}s.")
+                break
+
         except Exception:
             continue
 

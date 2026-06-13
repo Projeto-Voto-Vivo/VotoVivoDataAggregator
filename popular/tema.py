@@ -7,6 +7,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
 try:
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST", "localhost"),
@@ -21,8 +24,9 @@ except mysql.connector.Error:
 def popular_temas_camara():
     url = "https://dadosabertos.camara.leg.br/api/v2/referencias/proposicoes/codTema"
     res = requests.get(url).json()
-    
-    for t in res.get("dados", []):
+
+    dados = res.get("dados", [])
+    for t in dados:
         cursor.execute("""
             INSERT IGNORE INTO tema (codigoExterno, casa, descricao, nivel)
             VALUES (%s, 'Camara', %s, 'UNICO')
@@ -39,7 +43,7 @@ def popular_assuntos_senado():
     else:
         assuntos_data = res.get("assuntos", [])
         assuntos = assuntos_data if isinstance(assuntos_data, list) else assuntos_data.get("assunto", [])
-    
+
     for a in assuntos:
         cursor.execute("""
             INSERT IGNORE INTO tema (codigoExterno, casa, descricao, nivel)

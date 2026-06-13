@@ -83,30 +83,18 @@ def importar_orgaos_camara():
     """)
     proposicoes = cursor.fetchall()
 
-    if is_test_mode:
-        limite_itens = 20
-        print(
-            f" [i] MODO TESTE ATIVO: Limitando verificação a 20 proposições na Câmara."
-        )
-        proposicoes = proposicoes[:limite_itens]
-
     total = len(proposicoes)
     print(f"Total de proposições a avaliar no banco: {total}")
-    if ultimo_id_proposicao_chk > 0 and not is_test_mode:
-        print(
-            f" [i] Checkpoint ativo: Pulando automaticamente até a proposição da API de ID {ultimo_id_proposicao_chk}..."
-        )
+    if ultimo_id_proposicao_chk > 0:
+        print(f" [i] Checkpoint ativo: Pulando automaticamente até a proposição da API de ID {ultimo_id_proposicao_chk}...")
 
     start_time = time.time()
     contador_novos_orgaos = 0
 
     try:
-        for (id_api,) in tqdm(
-            proposicoes,
-            desc="Processando órgãos (Câmara)",
-            unit="proposição",
-        ):
-            if id_api <= ultimo_id_proposicao_chk and not is_test_mode:
+        for (id_api,) in tqdm(proposicoes, desc="Processando órgãos (Câmara)", unit="proposição"):
+
+            if id_api <= ultimo_id_proposicao_chk:
                 continue
 
             if (
@@ -201,10 +189,8 @@ def importar_orgaos_senado():
     )
     data_hoje = datetime.now().strftime("%Y-%m-%d")
 
-    if checkpoint_senado_atual == f"CONCLUIDO_{data_hoje}" and not is_test_mode:
-        print(
-            " [i] Carga de comissões do Senado já realizada com sucesso hoje. Pulando etapa."
-        )
+    if checkpoint_senado_atual == f"CONCLUIDO_{data_hoje}":
+        print(" [i] Carga de comissões do Senado já realizada com sucesso hoje. Pulando etapa.")
         return
 
     url = f"{BASE_URL_SENADO}/comissao/lista/colegiados"
@@ -222,14 +208,7 @@ def importar_orgaos_senado():
 
             if isinstance(comissoes, dict):
                 comissoes = [comissoes]
-
-            if is_test_mode:
-                limite_itens = 5
-                print(
-                    f" [i] MODO TESTE ATIVO: Limitando importação a 5 colegiados no Senado."
-                )
-                comissoes = comissoes[:limite_itens]
-
+                
             if db.in_transaction:
                 db.commit()
 

@@ -86,23 +86,17 @@ def importar_votacoes_camara():
         {"ano": 2026, "meses": [(1, "2026-01-01", "2026-01-31"), (2, "2026-02-01", "2026-02-28"), (3, "2026-03-01", "2026-03-31"), (4, "2026-04-01", "2026-04-30"), (5, "2026-05-01", "2026-05-31")]}
     ]
 
-    if is_test_mode:
-        cronograma_camara = [{"ano": 2025, "meses": [(5, "2025-05-01", "2025-05-31")]}]
-
-    checkpoint_atual = obter_ultimo_checkpoint(script_camara, default_value="2025_5_1")
-    ano_chk, mes_chk, pagina_chk = map(int, checkpoint_atual.split("_"))
+    checkpoint_atual = obter_ultimo_checkpoint(script_camara, default_value="1_1")
+    mes_chk, pagina_chk = map(int, checkpoint_atual.split('_'))
 
     url = "https://dadosabertos.camara.leg.br/api/v2/votacoes"
     start_time = time.time()
 
-    for bloco in cronograma_camara:
-        ano = bloco["ano"]
-        if ano < ano_chk and not is_test_mode:
+    for num_mes, inicio, fim in meses_mapeados:
+        if num_mes < mes_chk:
             continue
 
-        for num_mes, inicio, fim in bloco["meses"]:
-            if ano == ano_chk and num_mes < mes_chk and not is_test_mode:
-                continue
+        pagina = pagina_chk if num_mes == mes_chk else 1
 
             pagina = pagina_chk if (ano == ano_chk and num_mes == mes_chk and not is_test_mode) else 1
 
@@ -184,9 +178,63 @@ def importar_votacoes_camara():
 
                         except Exception:
                             continue
+                        v_detalhe = res_detalhe.json().get("dados", {})
 
-                    salvar_checkpoint_transacao(script_camara, f"{ano}_{num_mes}_{pagina}")
-                    db.commit()
+                        id_proposicao = None
+                        elementos_afetados = v_detalhe.get("proposicoesAfetadas", []) + v_detalhe.get("objetosPossiveis", [])
+                        
+                        for p in elementos_afetados:
+                            if p.get("id"):
+                                id_api_verificar = str(p.get("id"))
+                                if id_api_verificar in map_proposicoes:
+                                    id_proposicao = map_proposicoes[id_api_verificar]
+                                    break
+
+                        uri_orgao = v_detalhe.get("uriOrgao", "")
+                        id_orgao_api = uri_orgao.split("/")[-1] if uri_orgao else None
+                        id_orgao = garantizar_orgao(id_orgao_api, v_detalhe.get("siglaOrgao"), 'Camara')
+
+                        dataHora = v_detalhe.get("dataHoraRegistro") or (v_detalhe.get("data") + " 00:00:00" if v_detalhe.get("data") else None)
+                        
+                        aprovacao = v_detalhe.get("aprovacao")
+                        if aprovacao == 1:
+                            resultado = "Aprovado"
+                        elif aprovacao == 0:
+                            resultado = "Rejeitado"
+                        else:
+                            resultado = v_detalhe.get("resultado")
+
+                        resumo = v_detalhe.get("descricao")
+                        
+                        tipo_api = (v_detalhe.get("tipoVotacao") or "").upper()
+                        if tipo_api == "NOMINAL":
+                            tipo = "NOMINAL"
+                        else:
+                            tipo = "SIMBOLICA"
+
+                        cursor.execute("""
+                            INSERT INTO votacao
+                            (idApi, casa, idProposicao, idOrgao, dataHora, resumoMateria, resultadoFinal, tipoVotacao)
+                            VALUES (%s, 'Camara', %s, %s, %s, %s, %s, %s)
+                            ON DUPLICATE KEY UPDATE
+                                idProposicao = VALUES(idProposicao),
+                                idOrgao = VALUES(idOrgao),
+                                dataHora = VALUES(dataHora),
+                                resumoMateria = VALUES(resumoMateria),
+                                resultadoFinal = VALUES(resultadoFinal),
+                                tipoVotacao = VALUES(tipoVotacao)
+                        """, (str(id_api), id_proposicao, id_orgao, dataHora, resumo, resultado, tipo))
+
+                    except Exception:
+                        continue
+
+                salvar_checkpoint_transacao(script_camara, f"{num_mes}_{pagina}")
+                db.commit()
+
+                if len(dados) < 100:
+                    break
+                pagina += 1
+                time.sleep(0.2)
 
                     if len(dados) < 100 or is_test_mode:
                         break
@@ -224,15 +272,12 @@ def importar_votacoes_senado():
     
     checkpoint_senado_atual = int(obter_ultimo_checkpoint(script_senado, default_value="0"))
 
-    if is_test_mode:
-        proposicoes = proposicoes[:5]
-
     headers = {"Accept": "application/json"}
     start_time = time.time()
 
     try:
         for id_proposicao, id_api_materia in tqdm(proposicoes, desc="Matérias Senado"):
-            if id_proposicao <= checkpoint_senado_atual and not is_test_mode:
+            if id_proposicao <= checkpoint_senado_atual:
                 continue
 
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:

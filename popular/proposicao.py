@@ -10,6 +10,9 @@ from urllib3.util.retry import Retry
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
 TIPOS_PERMITIDOS = {
     "PDC", "PL", "PLP", "MPV", "PLV", "PDL", "PEC", "VET",
     "PLS", "PLC", "PDS", "PLN", "PDN",
@@ -196,6 +199,7 @@ def importar_camara_mes(ano, mes):
     total_inseridos_mes = 0
     paginas_sem_novos = 0
     MAX_PAGINAS_SEM_NOVOS = 5
+    start_time = time.time()
 
     while True:
         params["pagina"] = pagina
@@ -266,6 +270,10 @@ def importar_camara_mes(ano, mes):
             pagina += 1
             time.sleep(0.2)
 
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                print(f"\n[LIMITE DE TEMPO] Câmara interrompida após {tempo_limite_segundos}s na página {pagina}.")
+                break
+
         except Exception as e:
             print(
                 f"       [!] Erro crítico na execução da página {pagina}: {e}"
@@ -274,11 +282,7 @@ def importar_camara_mes(ano, mes):
                 db.rollback()
             break
 
-    if db.in_transaction:
-        db.commit()
-
-    proximo_mes = mes + 1 if mes < 12 else 1
-    proximo_ano = ano if mes < 12 else ano + 1
+    if db.in_transaction: db.commit()
     db.start_transaction()
     salvar_checkpoint_transacao(
         script_camara, f"{proximo_ano}_{proximo_mes}_1"
@@ -321,6 +325,7 @@ def importing_senado_mes(ano, mes):
     total_inseridos_mes = 0
     paginas_sem_insercao = 0
     MAX_PAGINAS_SEM_INSERCAO = 10
+    start_time = time.time()
 
     while True:
         params["pagina"] = pagina
@@ -391,13 +396,10 @@ def importing_senado_mes(ano, mes):
 
                 if not tipo_permitido(sigla, "Senado"):
                     continue
-
-                # CORREÇÃO: Mudado o nome da chamada de garantizar para garantir_tipo
+                
                 id_tipo = garantir_tipo(sigla, "Senado")
-
-                cursor.execute(
-                    "SELECT 1 FROM proposicao WHERE idApi = %s", (id_api,)
-                )
+                
+                cursor.execute("SELECT 1 FROM proposicao WHERE idApi = %s", (id_api,))
                 if cursor.fetchone():
                     continue
 
@@ -440,6 +442,10 @@ def importing_senado_mes(ano, mes):
             pagina += 1
             time.sleep(0.5)
 
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                print(f"\n[LIMITE DE TEMPO] Senado interrompido após {tempo_limite_segundos}s na página {pagina}.")
+                break
+
         except Exception as e:
             print(
                 f"       [!] Erro crítico na execução da página {pagina}: {e}"
@@ -448,11 +454,7 @@ def importing_senado_mes(ano, mes):
                 db.rollback()
             break
 
-    if db.in_transaction:
-        db.commit()
-
-    proximo_mes = mes + 1 if mes < 12 else 1
-    proximo_ano = ano if mes < 12 else ano + 1
+    if db.in_transaction: db.commit()
     db.start_transaction()
     salvar_checkpoint_transacao(
         script_senado, f"{proximo_ano}_{proximo_mes}_1"

@@ -8,6 +8,9 @@ from tqdm import tqdm
 
 load_dotenv()
 
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
 try:
     db = mysql.connector.connect(
         host=os.getenv("DB_HOST", "localhost"),
@@ -98,26 +101,12 @@ try:
     for ano in ANOS_BUSCA:
         print(f"\n--- INICIANDO PROCESSAMENTO DO ANO {ano} ---")
 
-        
-        if ano == 2025:
-            
-            meses_filtrados = list(range(5, 13))
-        elif ano == 2026:
-            
-            meses_filtrados = list(range(1, 6))
-        else:
-            meses_filtrados = MESES_COMPLETOS
+        print(f"[CÂMARA] Analisando despesas para {len(deputados)} deputados...")
 
-        
-        print(
-            f"[CÂMARA] Analisando despesas de {meses_filtrados[0]}/{ano} até {meses_filtrados[-1]}/{ano} para {len(deputados)} deputados..."
-        )
+        checkpoint_camara_atual = obter_ultimo_checkpoint(script_camara, default_value="0_0")
+        ano_chk, id_interno_chk = map(int, checkpoint_camara_atual.split('_'))
 
-        checkpoint_camara_atual = obter_ultimo_checkpoint(
-            script_camara, default_value="0_0"
-        )
-        ano_chk, id_interno_chk = map(int, checkpoint_camara_atual.split("_"))
-
+        start_time = time.time()
         for id_api, id_interno, _ in tqdm(deputados, desc=f"Deputados {ano}"):
             # Validação do checkpoint adaptado
             if ano < ano_chk:
@@ -159,12 +148,14 @@ try:
             salvar_checkpoint_transacao(script_camara, f"{ano}_{id_interno}")
             db.commit()
 
-        
-        print(f"[SENADO] Analisando lote de despesas dos senadores para {ano}...")
-        checkpoint_senado_atual = obter_ultimo_checkpoint(
-            script_senado, default_value="0"
-        )
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                print(f"\n[LIMITE DE TEMPO] Câmara interrompida após {tempo_limite_segundos}s.")
+                break
 
+        print(f"[SENADO] Analisando lote de despesas dos senadores...")
+        checkpoint_senado_atual = obter_ultimo_checkpoint(script_senado, default_value="0")
+        
+        
         if ano <= int(checkpoint_senado_atual):
             print(
                 f" [i] Lote anual do Senado para {ano} já foi processado anteriormente nesta execução. Pulando."

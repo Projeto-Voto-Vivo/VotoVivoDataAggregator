@@ -7,18 +7,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-try:
-    db = mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo"),
-    )
-    cursor = db.cursor(buffered=True)
-    print("[+] Conexão com o banco de dados estabelecida.\n")
-except mysql.connector.Error as err:
-    print(f"[!] Erro ao conectar ao banco: {err}")
-    sys.exit(1)
+is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
+tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+
+db = mysql.connector.connect(
+    host=os.getenv("DB_HOST", "localhost"),
+    user=os.getenv("DB_USER", "root"),
+    password=os.getenv("DB_PASSWORD", ""),
+    database=os.getenv("DB_NAME", "votoVivo")
+)
+cursor = db.cursor(buffered=True)
 
 
 TIPOS_FIXOS = [
