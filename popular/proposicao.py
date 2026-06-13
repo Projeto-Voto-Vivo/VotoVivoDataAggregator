@@ -282,6 +282,9 @@ def importar_camara_mes(ano, mes):
                 db.rollback()
             break
 
+    proximo_mes = mes + 1 if mes < 12 else 1
+    proximo_ano = ano if mes < 12 else ano + 1
+
     if db.in_transaction: db.commit()
     db.start_transaction()
     salvar_checkpoint_transacao(
@@ -453,6 +456,9 @@ def importing_senado_mes(ano, mes):
             if db.in_transaction:
                 db.rollback()
             break
+
+    proximo_mes = mes + 1 if mes < 12 else 1
+    proximo_ano = ano if mes < 12 else ano + 1
 
     if db.in_transaction: db.commit()
     db.start_transaction()
