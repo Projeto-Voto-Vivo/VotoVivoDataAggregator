@@ -86,26 +86,26 @@ def importar_votacoes_camara():
         {"ano": 2026, "meses": [(1, "2026-01-01", "2026-01-31"), (2, "2026-02-01", "2026-02-28"), (3, "2026-03-01", "2026-03-31"), (4, "2026-04-01", "2026-04-30"), (5, "2026-05-01", "2026-05-31")]}
     ]
 
-    checkpoint_atual = obter_ultimo_checkpoint(script_camara, default_value="1_1")
-    mes_chk, pagina_chk = map(int, checkpoint_atual.split('_'))
+    checkpoint_atual = obter_ultimo_checkpoint(script_camara, default_value="2025_5_1")
+    ano_chk, mes_chk, pagina_chk = map(int, checkpoint_atual.split('_'))
 
     url = "https://dadosabertos.camara.leg.br/api/v2/votacoes"
     start_time = time.time()
 
-    for num_mes, inicio, fim in meses_mapeados:
-        if num_mes < mes_chk:
-            continue
+    for bloco in cronograma_camara:
+        ano = bloco["ano"]
+        for num_mes, inicio, fim in bloco["meses"]:
+            if ano < ano_chk or (ano == ano_chk and num_mes < mes_chk):
+                continue
 
-        pagina = pagina_chk if num_mes == mes_chk else 1
-
-            pagina = pagina_chk if (ano == ano_chk and num_mes == mes_chk and not is_test_mode) else 1
+            pagina = pagina_chk if (ano == ano_chk and num_mes == mes_chk) else 1
 
             while True:
                 if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
                     return
 
                 params = {"dataInicio": inicio, "dataFim": fim, "itens": 100, "pagina": pagina}
-                
+
                 try:
                     res = requests.get(url, params=params, timeout=60)
                     if res.status_code != 200:
@@ -113,7 +113,7 @@ def importar_votacoes_camara():
                     dados = res.json().get("dados", [])
                     if not dados:
                         break
-                    
+
                     if db.in_transaction:
                         db.commit()
 
@@ -132,7 +132,7 @@ def importar_votacoes_camara():
 
                             id_proposicao = None
                             elementos_afetados = v_detalhe.get("proposicoesAfetadas", []) + v_detalhe.get("objetosPossiveis", [])
-                            
+
                             for p in elementos_afetados:
                                 if p.get("id"):
                                     id_api_verificar = str(p.get("id"))
@@ -145,7 +145,7 @@ def importar_votacoes_camara():
                             id_orgao = garantizar_orgao(id_orgao_api, v_detalhe.get("siglaOrgao"), 'Camara')
 
                             dataHora = v_detalhe.get("dataHoraRegistro") or (v_detalhe.get("data") + " 00:00:00" if v_detalhe.get("data") else None)
-                            
+
                             aprovacao = v_detalhe.get("aprovacao")
                             if aprovacao == 1:
                                 resultado = "Aprovado"
@@ -155,17 +155,16 @@ def importar_votacoes_camara():
                                 resultado = v_detalhe.get("resultado")
 
                             resumo = v_detalhe.get("descricao")
-                            
-                            efeitos = v_detalhe.get("efeitosRegistrados", [])
-                            descricao_lower = (resumo or "").lower()
-                            if "nominal" in descricao_lower or any("voto" in e.get("descEfeito", "").lower() for e in efeitos):
+
+                            tipo_api = (v_detalhe.get("tipoVotacao") or "").upper()
+                            if tipo_api == "NOMINAL":
                                 tipo = "NOMINAL"
                             else:
                                 tipo = "SIMBOLICA"
 
                             cursor.execute("""
                                 INSERT INTO votacao
-                                (idApi, casa, idProposicao, idOrgao, dataHora, resumeMateria, resultadoFinal, tipoVotacao)
+                                (idApi, casa, idProposicao, idOrgao, dataHora, resumoMateria, resultadoFinal, tipoVotacao)
                                 VALUES (%s, 'Camara', %s, %s, %s, %s, %s, %s)
                                 ON DUPLICATE KEY UPDATE
                                     idProposicao = VALUES(idProposicao),
@@ -178,65 +177,11 @@ def importar_votacoes_camara():
 
                         except Exception:
                             continue
-                        v_detalhe = res_detalhe.json().get("dados", {})
 
-                        id_proposicao = None
-                        elementos_afetados = v_detalhe.get("proposicoesAfetadas", []) + v_detalhe.get("objetosPossiveis", [])
-                        
-                        for p in elementos_afetados:
-                            if p.get("id"):
-                                id_api_verificar = str(p.get("id"))
-                                if id_api_verificar in map_proposicoes:
-                                    id_proposicao = map_proposicoes[id_api_verificar]
-                                    break
+                    salvar_checkpoint_transacao(script_camara, f"{ano}_{num_mes}_{pagina}")
+                    db.commit()
 
-                        uri_orgao = v_detalhe.get("uriOrgao", "")
-                        id_orgao_api = uri_orgao.split("/")[-1] if uri_orgao else None
-                        id_orgao = garantizar_orgao(id_orgao_api, v_detalhe.get("siglaOrgao"), 'Camara')
-
-                        dataHora = v_detalhe.get("dataHoraRegistro") or (v_detalhe.get("data") + " 00:00:00" if v_detalhe.get("data") else None)
-                        
-                        aprovacao = v_detalhe.get("aprovacao")
-                        if aprovacao == 1:
-                            resultado = "Aprovado"
-                        elif aprovacao == 0:
-                            resultado = "Rejeitado"
-                        else:
-                            resultado = v_detalhe.get("resultado")
-
-                        resumo = v_detalhe.get("descricao")
-                        
-                        tipo_api = (v_detalhe.get("tipoVotacao") or "").upper()
-                        if tipo_api == "NOMINAL":
-                            tipo = "NOMINAL"
-                        else:
-                            tipo = "SIMBOLICA"
-
-                        cursor.execute("""
-                            INSERT INTO votacao
-                            (idApi, casa, idProposicao, idOrgao, dataHora, resumoMateria, resultadoFinal, tipoVotacao)
-                            VALUES (%s, 'Camara', %s, %s, %s, %s, %s, %s)
-                            ON DUPLICATE KEY UPDATE
-                                idProposicao = VALUES(idProposicao),
-                                idOrgao = VALUES(idOrgao),
-                                dataHora = VALUES(dataHora),
-                                resumoMateria = VALUES(resumoMateria),
-                                resultadoFinal = VALUES(resultadoFinal),
-                                tipoVotacao = VALUES(tipoVotacao)
-                        """, (str(id_api), id_proposicao, id_orgao, dataHora, resumo, resultado, tipo))
-
-                    except Exception:
-                        continue
-
-                salvar_checkpoint_transacao(script_camara, f"{num_mes}_{pagina}")
-                db.commit()
-
-                if len(dados) < 100:
-                    break
-                pagina += 1
-                time.sleep(0.2)
-
-                    if len(dados) < 100 or is_test_mode:
+                    if len(dados) < 100:
                         break
                     pagina += 1
                     time.sleep(0.2)
@@ -248,7 +193,7 @@ def importar_votacoes_camara():
 
             if db.in_transaction:
                 db.commit()
-            
+
             proximo_mes = num_mes + 1 if num_mes < 12 else 1
             proximo_ano = ano if num_mes < 12 else ano + 1
             db.start_transaction()
