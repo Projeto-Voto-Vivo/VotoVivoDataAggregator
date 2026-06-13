@@ -21,7 +21,6 @@ PIPELINE_SCRIPTS = [
     "autoriaProposicao.py",
     "tramitacao.py",
     "presenca.py",
-    "emenda.py",
     "votacao.py",
     "voto.py",
     "relacionarEmendaParlamentar.py",
