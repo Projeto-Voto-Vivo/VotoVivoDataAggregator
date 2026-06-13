@@ -40,7 +40,7 @@ def salvar_checkpoint_transacao(nome_script, valor_parametro):
     cursor.execute(query, (nome_script, str(valor_parametro)))
 
 cursor.execute("SELECT codigoExterno, casa, idTema FROM tema")
-mapa_temas = {(row[0], row[1]): row[2] for row in cursor.fetchall()}
+mapa_temas = {(str(row[0]), row[1]): row[2] for row in cursor.fetchall()}
 
 def vincular_camara():
     cursor.execute("""
