@@ -1,11 +1,11 @@
-import requests
-import mysql.connector
-import time
-import sys
 import os
+import sys
+import time
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from dotenv import load_dotenv
+import mysql.connector
+import requests
 
 load_dotenv()
 
@@ -13,7 +13,6 @@ is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 
 API_KEY = os.getenv("PORTAL_TRANSPARENCIA_API_KEY")
-ANO = os.getenv("EMENDAS_ANO", "2024")
 SLEEP_SECONDS = float(os.getenv("EMENDAS_SLEEP", "0.7"))
 
 if not API_KEY:
@@ -33,15 +32,15 @@ except mysql.connector.Error as err:
     print(f"Erro de conexão: {err}")
     sys.exit(1)
 
+script_checkpoint = "popular/emenda.py#2025_2026"
 
-script_checkpoint = "popular/emenda.py"
 
-
-def obter_ultimo_checkpoint(nome_script, default_value="1"):
+def obter_ultimo_checkpoint(nome_script, default_value="2025_1"):
     query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
     cursor.execute(query, (nome_script,))
     resultado = cursor.fetchone()
     return resultado[0] if resultado else default_value
+
 
 def salvar_checkpoint_transacao(nome_script, valor_parametro):
     query = """
@@ -66,6 +65,7 @@ def converter_valor(valor):
     except InvalidOperation:
         return None
 
+
 def converter_data(data):
     if data is None or data == "":
         return None
@@ -85,133 +85,132 @@ headers = {
 }
 
 print("=" * 50)
-print("Buscando emendas parlamentares...")
+print("Buscando emendas parlamentares (Maio/2025 a Maio/2026)...")
 print("=" * 50)
 
+checkpoint_atual = obter_ultimo_checkpoint(script_checkpoint, default_value="2025_1")
+ano_atual, pagina = map(int, checkpoint_atual.split("_"))
 
-pagina = int(obter_ultimo_checkpoint(script_checkpoint, default_value="1"))
+ANOS_ESCOPO = [2025, 2026]
 contador_emendas = 0
 contador_documentos = 0
 start_time = time.time()
 
+pagina_limite_teste = pagina + 2
 
-pagina_limite_teste = pagina + 2 
+try:
+    for ano in ANOS_ESCOPO:
+        if ano < ano_atual:
+            continue
+        if ano > ano_atual:
+            pagina = 1
+            pagina_limite_teste = pagina + 2
 
-while True:
-    if is_test_mode and pagina > pagina_limite_teste:
-        print(f"\n[MODO TESTE] Limitado a processar 3 páginas por execução. Parando na página {pagina}.")
-        break
+        while True:
+            if is_test_mode and pagina > pagina_limite_teste:
+                print(f"\n[MODO TESTE] Parando na página {pagina} do ano {ano}.")
+                break
 
-    if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
-        print(f"\n[LIMITE DE TEMPO] Execução interrompida após {tempo_limite_segundos}s na página {pagina}.")
-        break
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                print(f"\n[LIMITE DE TEMPO] Interrompido na página {pagina} do ano {ano}.")
+                break
 
-    url_emendas = "https://api.portaldatransparencia.gov.br/api-de-dados/emendas"
-    parametros = {
-        "ano": ANO,
-        "pagina": pagina
-    }
+            url_emendas = "https://api.portaldatransparencia.gov.br/api-de-dados/emendas"
+            parametros = {
+                "ano": ano,
+                "pagina": pagina
+            }
 
-    try:
-        time.sleep(SLEEP_SECONDS)
+            time.sleep(SLEEP_SECONDS)
+            response = requests.get(url_emendas, headers=headers, params=parametros, timeout=30)
 
-        response = requests.get(
-            url_emendas,
-            headers=headers,
-            params=parametros,
-            timeout=30
-        )
+            print(f"\n[Fila] Lendo Ano: {ano} | Página: {pagina} | URL: {response.url}")
+            print("Status:", response.status_code)
 
-        print(f"\n[Fila] Lendo Página: {pagina} | URL: {response.url}")
-        print("Status:", response.status_code)
+            if response.status_code == 429:
+                print("Limite da API atingido. Aguardando 60 segundos...")
+                time.sleep(60)
+                response = requests.get(url_emendas, headers=headers, params=parametros, timeout=30)
 
-        if response.status_code == 429:
-            print("Limite da API atingido. Aguardando 60 segundos...")
-            time.sleep(60)
-            response = requests.get(
-                url_emendas,
-                headers=headers,
-                params=parametros,
-                timeout=30
-            )
+            if response.status_code != 200:
+                print(f"Erro na página {pagina} do ano {ano}: {response.status_code}")
+                break
 
-        if response.status_code != 200:
-            print(f"Erro ao buscar emendas na página {pagina}: {response.status_code}")
-            break
+            emendas = response.json()
+            if not emendas:
+                print(f"Não há mais emendas para o ano {ano}.")
+                break
 
-        emendas = response.json()
+            print(f"Ano {ano} | Página {pagina}: {len(emendas)} emenda(s) encontrada(s)")
 
-        if not emendas:
-            print("Não há mais emendas para buscar.")
-            break
-
-        print(f"Página {pagina}: {len(emendas)} emenda(s) encontrada(s)")
-
-        for emenda in emendas:
-            codigo_emenda = emenda.get("codigoEmenda")
-
-            if not codigo_emenda:
-                continue
-
-            try:
-                sql_emenda = """
-                    INSERT IGNORE INTO emenda (
-                        codigoEmenda, ano, tipoEmenda, autor, nomeAutor, numeroEmenda,
-                        localidadeDoGasto, funcao, subfuncao, valorEmpenhado,
-                        valorLiquidado, valorPago, valorRestoInscrito, valorRestoCancelado, valorRestoPago
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """
-
-                valores_emenda = (
-                    codigo_emenda,
-                    emenda.get("ano"),
-                    emenda.get("tipoEmenda"),
-                    emenda.get("autor"),
-                    emenda.get("nomeAutor"),
-                    emenda.get("numeroEmenda"),
-                    emenda.get("localidadeDoGasto"),
-                    emenda.get("funcao"),
-                    emenda.get("subfuncao"),
-                    converter_valor(emenda.get("valorEmpenhado")),
-                    converter_valor(emenda.get("valorLiquidado")),
-                    converter_valor(emenda.get("valorPago")),
-                    converter_valor(emenda.get("valorRestoInscrito")),
-                    converter_valor(emenda.get("valorRestoCancelado")),
-                    converter_valor(emenda.get("valorRestoPago"))
-                )
-
-                cursor.execute(sql_emenda, valores_emenda)
-
-                cursor.execute("SELECT idEmenda FROM emenda WHERE codigoEmenda = %s", (codigo_emenda,))
-                resultado_emenda = cursor.fetchone()
-
-                if not resultado_emenda:
+            for emenda in emendas:
+                codigo_emenda = emenda.get("codigoEmenda")
+                if not codigo_emenda:
                     continue
 
-                id_emenda = resultado_emenda[0]
-                contador_emendas += 1
-
-                
-                url_documentos = f"https://api.portaldatransparencia.gov.br/api-de-dados/emendas/documentos/{codigo_emenda}"
-                
-                time.sleep(SLEEP_SECONDS)
-                response_documentos = requests.get(url_documentos, headers=headers, timeout=30)
-
-                if response_documentos.status_code == 429:
-                    print("Limite da API atingido nos documentos. Aguardando 60 segundos...")
-                    time.sleep(60)
+                try:
+                    url_documentos = f"https://api.portaldatransparencia.gov.br/api-de-dados/emendas/documentos/{codigo_emenda}"
+                    time.sleep(SLEEP_SECONDS)
                     response_documentos = requests.get(url_documentos, headers=headers, timeout=30)
 
-                if response_documentos.status_code == 200:
-                    documentos = response_documentos.json()
+                    if response_documentos.status_code == 429:
+                        print("Limite atingido nos documentos. Aguardando 60 segundos...")
+                        time.sleep(60)
+                        response_documentos = requests.get(url_documentos, headers=headers, timeout=30)
 
-                    if isinstance(documentos, dict):
-                        documentos = [documentos]
+                    documentos_validos = []
+                    if response_documentos.status_code == 200:
+                        documentos = response_documentos.json()
+                        if isinstance(documentos, dict):
+                            documentos = [documentos]
 
-                    for documento in documentos:
+                        for documento in documentos:
+                            data_doc = converter_data(documento.get("data"))
+                            if data_doc:
+                                if (ano == 2025 and data_doc.month >= 5) or (ano == 2026 and data_doc.month <= 5):
+                                    documentos_validos.append((documento, data_doc))
+
+                    if not documentos_validos and ano in [2025, 2026]:
+                        if ano == 2025:
+                            continue
+
+                    sql_emenda = """
+                        INSERT IGNORE INTO emenda (
+                            codigoEmenda, ano, tipoEmenda, autor, nomeAutor, numeroEmenda,
+                            localidadeDoGasto, funcao, subfuncao, valorEmpenhado,
+                            valorLiquidado, valorPago, valorRestoInscrito, valorRestoCancelado, valorRestoPago
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """
+                    valores_emenda = (
+                        codigo_emenda,
+                        emenda.get("ano"),
+                        emenda.get("tipoEmenda"),
+                        emenda.get("autor"),
+                        emenda.get("nomeAutor"),
+                        emenda.get("numeroEmenda"),
+                        emenda.get("localidadeDoGasto"),
+                        emenda.get("funcao"),
+                        emenda.get("subfuncao"),
+                        converter_valor(emenda.get("valorEmpenhado")),
+                        converter_valor(emenda.get("valorLiquidado")),
+                        converter_valor(emenda.get("valorPago")),
+                        converter_valor(emenda.get("valorRestoInscrito")),
+                        converter_valor(emenda.get("valorRestoCancelado")),
+                        converter_valor(emenda.get("valorRestoPago"))
+                    )
+                    cursor.execute(sql_emenda, valores_emenda)
+
+                    cursor.execute("SELECT idEmenda FROM emenda WHERE codigoEmenda = %s", (codigo_emenda,))
+                    resultado_emenda = cursor.fetchone()
+                    if not resultado_emenda:
+                        continue
+
+                    id_emenda = resultado_emenda[0]
+                    contador_emendas += 1
+
+                    for documento, data_doc in documentos_validos:
                         codigo_documento = documento.get("codigoDocumento")
-
                         if not codigo_documento:
                             continue
 
@@ -222,42 +221,35 @@ while True:
                             )
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                         """
-
                         valores_documento = (
                             id_emenda,
                             documento.get("id"),
                             codigo_emenda,
-                            converter_data(documento.get("data")),
+                            data_doc,
                             documento.get("fase"),
                             codigo_documento,
                             documento.get("codigoDocumentoResumido"),
                             documento.get("especieTipo"),
                             documento.get("tipoEmenda")
                         )
-
                         cursor.execute(sql_documento, valores_documento)
                         contador_documentos += 1
 
-            except Exception as e:
-                print(f" Erro ao processar emenda {codigo_emenda}: {e}")
-                db.rollback()
+                except Exception as e:
+                    print(f" Erro ao processar emenda {codigo_emenda}: {e}")
+                    db.rollback()
 
-        
-        salvar_checkpoint_transacao(script_checkpoint, pagina)
-        db.commit()
-        
-        pagina += 1
+            salvar_checkpoint_transacao(script_checkpoint, f"{ano}_{pagina}")
+            db.commit()
+            pagina += 1
 
-    except KeyboardInterrupt:
-        print(f"\n[!] Execução interrompida via teclado (Ctrl+C). A página atual ({pagina}) será reprocessada na próxima rodada.")
-        break
-    except Exception as e:
-        print(f"Erro geral na página {pagina}: {e}")
-        break
+except KeyboardInterrupt:
+    print(f"\n[!] Execução interrompida. O par {ano}_{pagina} será reprocessado.")
+except Exception as e:
+    print(f"Erro geral no processamento: {e}")
 
 print("\n" + "=" * 50)
 print("Importação de emendas concluída!")
-print(f"Páginas lidas com sucesso até: {pagina - 1}")
 print(f"Total de emendas nesta execução: {contador_emendas}")
 print(f"Total de documentos nesta execução: {contador_documentos}")
 print("=" * 50)

@@ -1,10 +1,10 @@
 import os
-import requests
-import mysql.connector
-import time
 import sys
-from tqdm import tqdm
+import time
 from dotenv import load_dotenv
+import mysql.connector
+import requests
+from tqdm import tqdm
 
 load_dotenv()
 
@@ -16,20 +16,22 @@ try:
         host=os.getenv("DB_HOST", "localhost"),
         user=os.getenv("DB_USER", "root"),
         password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
+        database=os.getenv("DB_NAME", "votoVivo"),
     )
     cursor = db.cursor()
 except mysql.connector.Error:
     sys.exit(1)
 
-script_camara = "popular/votacao.py#camara"
-script_senado = "popular/votacao.py#senado"
+script_camara = "popular/votacao.py#camara_25_26"
+script_senado = "popular/votacao.py#senado_25_26"
 
-def obter_ultimo_checkpoint(nome_script, default_value="1_1"):
+
+def obter_ultimo_checkpoint(nome_script, default_value="2025_5_1"):
     query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
     cursor.execute(query, (nome_script,))
     resultado = cursor.fetchone()
     return resultado[0] if resultado else default_value
+
 
 def salvar_checkpoint_transacao(nome_script, valor_parametro):
     query = """
@@ -39,19 +41,24 @@ def salvar_checkpoint_transacao(nome_script, valor_parametro):
     """
     cursor.execute(query, (nome_script, str(valor_parametro)))
 
+
 orgaos_cache = {}
 cursor.execute("SELECT idOrgao, idApi FROM orgao")
 for id_, idApi in cursor.fetchall():
     orgaos_cache[str(idApi)] = id_
 
-def garantizar_orgao(id_api_orgao, sigla=None, casa='Camara'):
+
+def garantizar_orgao(id_api_orgao, sigla=None, casa="Camara"):
     if not id_api_orgao:
         return None
     id_api_str = str(id_api_orgao)
     if id_api_str in orgaos_cache:
         return orgaos_cache[id_api_str]
 
-    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = %s AND casa = %s", (id_api_str, casa))
+    cursor.execute(
+        "SELECT idOrgao FROM orgao WHERE idApi = %s AND casa = %s",
+        (id_api_str, casa),
+    )
     res = cursor.fetchone()
     if res:
         orgaos_cache[id_api_str] = res[0]
@@ -59,30 +66,24 @@ def garantizar_orgao(id_api_orgao, sigla=None, casa='Camara'):
 
     cursor.execute(
         "INSERT INTO orgao (idApi, sigla, nome, casa) VALUES (%s, %s, %s, %s)",
-        (id_api_str, sigla or "N/A", f"Órgão não mapeado ({sigla})", casa)
+        (id_api_str, sigla or "N/A", f"Órgão não mapeado ({sigla})", casa),
     )
     db.commit()
     id_novo = cursor.lastrowid
     orgaos_cache[id_api_str] = id_novo
     return id_novo
 
+
 def importar_votacoes_camara():
-    cursor.execute("SELECT idApi, idProposicao FROM proposicao WHERE idApi IS NOT NULL")
+    cursor.execute(
+        "SELECT idApi, idProposicao FROM proposicao WHERE idApi IS NOT NULL"
+    )
     map_proposicoes = {str(row[0]): row[1] for row in cursor.fetchall()}
 
-    meses_mapeados = [
-        (1, "2025-01-01", "2025-01-31"),
-        (2, "2025-02-01", "2025-02-28"),
-        (3, "2025-03-01", "2025-03-31"),
-        (4, "2025-04-01", "2025-04-30"),
-        (5, "2025-05-01", "2025-05-31"),
-        (6, "2025-06-01", "2025-06-30"),
-        (7, "2025-07-01", "2025-07-31"),
-        (8, "2025-08-01", "2025-08-31"),
-        (9, "2025-09-01", "2025-09-30"),
-        (10, "2025-10-01", "2025-10-31"),
-        (11, "2025-11-01", "2025-11-30"),
-        (12, "2025-12-01", "2025-12-31"),
+    # Cronograma estruturado cobrindo a transição de ano
+    cronograma_camara = [
+        {"ano": 2025, "meses": [(5, "2025-05-01", "2025-05-31"), (6, "2025-06-01", "2025-06-30"), (7, "2025-07-01", "2025-07-31"), (8, "2025-08-01", "2025-08-31"), (9, "2025-09-01", "2025-09-30"), (10, "2025-10-01", "2025-10-31"), (11, "2025-11-01", "2025-11-30"), (12, "2025-12-01", "2025-12-31")]},
+        {"ano": 2026, "meses": [(1, "2026-01-01", "2026-01-31"), (2, "2026-02-01", "2026-02-28"), (3, "2026-03-01", "2026-03-31"), (4, "2026-04-01", "2026-04-30"), (5, "2026-05-01", "2026-05-31")]}
     ]
 
     checkpoint_atual = obter_ultimo_checkpoint(script_camara, default_value="1_1")
@@ -97,33 +98,85 @@ def importar_votacoes_camara():
 
         pagina = pagina_chk if num_mes == mes_chk else 1
 
-        while True:
-            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
-                return
+            pagina = pagina_chk if (ano == ano_chk and num_mes == mes_chk and not is_test_mode) else 1
 
-            params = {"dataInicio": inicio, "dataFim": fim, "itens": 100, "pagina": pagina}
-            
-            try:
-                res = requests.get(url, params=params, timeout=60)
-                if res.status_code != 200:
-                    break
-                dados = res.json().get("dados", [])
-                if not dados:
-                    break
+            while True:
+                if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                    return
+
+                params = {"dataInicio": inicio, "dataFim": fim, "itens": 100, "pagina": pagina}
                 
-                if db.in_transaction:
-                    db.commit()
+                try:
+                    res = requests.get(url, params=params, timeout=60)
+                    if res.status_code != 200:
+                        break
+                    dados = res.json().get("dados", [])
+                    if not dados:
+                        break
+                    
+                    if db.in_transaction:
+                        db.commit()
 
-                db.start_transaction()
+                    db.start_transaction()
 
-                for v in dados:
-                    id_api = v.get("id")
-                    if not id_api:
-                        continue
+                    for v in dados:
+                        id_api = v.get("id")
+                        if not id_api:
+                            continue
 
-                    try:
-                        res_detalhe = requests.get(f"{url}/{id_api}", timeout=60)
-                        if res_detalhe.status_code != 200:
+                        try:
+                            res_detalhe = requests.get(f"{url}/{id_api}", timeout=60)
+                            if res_detalhe.status_code != 200:
+                                continue
+                            v_detalhe = res_detalhe.json().get("dados", {})
+
+                            id_proposicao = None
+                            elementos_afetados = v_detalhe.get("proposicoesAfetadas", []) + v_detalhe.get("objetosPossiveis", [])
+                            
+                            for p in elementos_afetados:
+                                if p.get("id"):
+                                    id_api_verificar = str(p.get("id"))
+                                    if id_api_verificar in map_proposicoes:
+                                        id_proposicao = map_proposicoes[id_api_verificar]
+                                        break
+
+                            uri_orgao = v_detalhe.get("uriOrgao", "")
+                            id_orgao_api = uri_orgao.split("/")[-1] if uri_orgao else None
+                            id_orgao = garantizar_orgao(id_orgao_api, v_detalhe.get("siglaOrgao"), 'Camara')
+
+                            dataHora = v_detalhe.get("dataHoraRegistro") or (v_detalhe.get("data") + " 00:00:00" if v_detalhe.get("data") else None)
+                            
+                            aprovacao = v_detalhe.get("aprovacao")
+                            if aprovacao == 1:
+                                resultado = "Aprovado"
+                            elif aprovacao == 0:
+                                resultado = "Rejeitado"
+                            else:
+                                resultado = v_detalhe.get("resultado")
+
+                            resumo = v_detalhe.get("descricao")
+                            
+                            efeitos = v_detalhe.get("efeitosRegistrados", [])
+                            descricao_lower = (resumo or "").lower()
+                            if "nominal" in descricao_lower or any("voto" in e.get("descEfeito", "").lower() for e in efeitos):
+                                tipo = "NOMINAL"
+                            else:
+                                tipo = "SIMBOLICA"
+
+                            cursor.execute("""
+                                INSERT INTO votacao
+                                (idApi, casa, idProposicao, idOrgao, dataHora, resumeMateria, resultadoFinal, tipoVotacao)
+                                VALUES (%s, 'Camara', %s, %s, %s, %s, %s, %s)
+                                ON DUPLICATE KEY UPDATE
+                                    idProposicao = VALUES(idProposicao),
+                                    idOrgao = VALUES(idOrgao),
+                                    dataHora = VALUES(dataHora),
+                                    resumoMateria = VALUES(resumoMateria),
+                                    resultadoFinal = VALUES(resultadoFinal),
+                                    tipoVotacao = VALUES(tipoVotacao)
+                            """, (str(id_api), id_proposicao, id_orgao, dataHora, resumo, resultado, tipo))
+
+                        except Exception:
                             continue
                         v_detalhe = res_detalhe.json().get("dados", {})
 
@@ -183,23 +236,33 @@ def importar_votacoes_camara():
                 pagina += 1
                 time.sleep(0.2)
 
-            except Exception:
-                if db.in_transaction:
-                    db.rollback()
-                break
+                    if len(dados) < 100 or is_test_mode:
+                        break
+                    pagina += 1
+                    time.sleep(0.2)
 
-        if db.in_transaction:
+                except Exception:
+                    if db.in_transaction:
+                        db.rollback()
+                    break
+
+            if db.in_transaction:
+                db.commit()
+            
+            proximo_mes = num_mes + 1 if num_mes < 12 else 1
+            proximo_ano = ano if num_mes < 12 else ano + 1
+            db.start_transaction()
+            salvar_checkpoint_transacao(script_camara, f"{proximo_ano}_{proximo_mes}_1")
             db.commit()
-        db.start_transaction()
-        salvar_checkpoint_transacao(script_camara, f"{num_mes + 1}_1")
-        db.commit()
+
 
 def importar_votacoes_senado():
+    # Filtro estrito adicionado: Coleta apenas matérias criadas nos anos do escopo (2025, 2026)
     cursor.execute("""
         SELECT p.idProposicao, p.idApi 
         FROM proposicao p
         JOIN tipoProposicao t ON p.idTipoProposicao = t.idTipoProposicao
-        WHERE t.casa = 'Senado' OR t.casa = 'Congresso'
+        WHERE (t.casa = 'Senado' OR t.casa = 'Congresso') AND p.ano IN (2025, 2026)
         ORDER BY p.idProposicao ASC
     """)
     proposicoes = cursor.fetchall()
@@ -281,6 +344,7 @@ def importar_votacoes_senado():
         cursor.close()
         db.close()
         sys.exit(0)
+
 
 if __name__ == "__main__":
     try:
