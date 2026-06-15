@@ -1,10 +1,10 @@
 import os
-import sys
 import time
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from dotenv import load_dotenv
 import mysql.connector
+
 from utils.http_client import http_client
 
 load_dotenv()
@@ -17,7 +17,7 @@ SLEEP_SECONDS = float(os.getenv("EMENDAS_SLEEP", "0.7"))
 
 if not API_KEY:
     print("Erro: defina PORTAL_TRANSPARENCIA_API_KEY no .env")
-    sys.exit(1)
+    exit(1)
 
 try:
     db = mysql.connector.connect(
@@ -30,9 +30,9 @@ try:
     print("Conexão estabelecida para Emendas Parlamentares.")
 except mysql.connector.Error as err:
     print(f"Erro de conexão: {err}")
-    sys.exit(1)
+    exit(1)
 
-script_checkpoint = "popular/emenda.py#dinamico"
+script_checkpoint = "popular/emenda.py#dinamico_v2"
 
 def obter_ultimo_checkpoint(nome_script, default_value="2025_1"):
     query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
@@ -123,6 +123,7 @@ try:
             }
 
             time.sleep(SLEEP_SECONDS)
+            
             response = http_client.get_safe(url_emendas, headers=headers, params=parametros, timeout=30)
 
             print(f"\n[Fila] Lendo Ano: {ano} | Página: {pagina} | URL: {response.url}")
@@ -145,8 +146,13 @@ try:
                     continue
 
                 try:
+                    if db.in_transaction:
+                        db.commit()
+                    db.start_transaction()
+
                     url_documentos = f"https://api.portaldatransparencia.gov.br/api-de-dados/emendas/documentos/{codigo_emenda}"
                     time.sleep(SLEEP_SECONDS)
+                    
                     response_documentos = http_client.get_safe(url_documentos, headers=headers, timeout=30)
 
                     documentos_validos = []
@@ -158,7 +164,6 @@ try:
                         for documento in documentos:
                             data_doc = converter_data(documento.get("data"))
                             if data_doc:
-                                # Filtro Dinâmico de Datas
                                 if ano == ANO_INICIO and data_doc.month < MES_INICIO:
                                     continue
                                 if ano == ANO_ATUAL and data_doc.month > MES_ATUAL:
@@ -195,9 +200,6 @@ try:
                         converter_valor(emenda.get("valorRestoCancelado")),
                         converter_valor(emenda.get("valorRestoPago"))
                     )
-                    
-                    if db.in_transaction: db.commit()
-                    db.start_transaction()
                     
                     cursor.execute(sql_emenda, valores_emenda)
 
@@ -240,10 +242,15 @@ try:
 
                 except Exception as e:
                     print(f" Erro ao processar emenda {codigo_emenda}: {e}")
-                    if db.in_transaction: db.rollback()
-
+                    if db.in_transaction: 
+                        db.rollback()
+            
+            if db.in_transaction:
+                db.commit()
+            db.start_transaction()
             salvar_checkpoint_transacao(script_checkpoint, f"{ano}_{pagina}")
             db.commit()
+            
             pagina += 1
 
 except KeyboardInterrupt:
