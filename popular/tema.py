@@ -1,4 +1,4 @@
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import os
 import time
@@ -23,7 +23,7 @@ except mysql.connector.Error:
 
 def popular_temas_camara():
     url = "https://dadosabertos.camara.leg.br/api/v2/referencias/proposicoes/codTema"
-    res = requests.get(url).json()
+    res = http_client.get_safe(url).json()
 
     dados = res.get("dados", [])
     for t in dados:
@@ -36,7 +36,7 @@ def popular_temas_camara():
 def popular_assuntos_senado():
     url = "https://legis.senado.leg.br/dadosabertos/processo/assuntos"
     headers = {"Accept": "application/json"}
-    res = requests.get(url, headers=headers).json()
+    res = http_client.get_safe(url, headers=headers).json()
     
     if isinstance(res, list):
         assuntos = res

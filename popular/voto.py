@@ -1,4 +1,4 @@
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import time
 import sys
@@ -70,7 +70,7 @@ def importar_votos_camara():
                 break
 
             try:
-                res = requests.get(f"https://dadosabertos.camara.leg.br/api/v2/votacoes/{id_api_votacao}/votos", timeout=30)
+                res = http_client.get_safe(f"https://dadosabertos.camara.leg.br/api/v2/votacoes/{id_api_votacao}/votos", timeout=30)
                 if res.status_code != 200: 
                     continue
                 
@@ -152,7 +152,7 @@ def importar_votos_senado():
 
             try:
                 url = f"https://legis.senado.leg.br/dadosabertos/materia/{id_api_materia}/votacoes"
-                res = requests.get(url, headers=headers, timeout=15)
+                res = http_client.get_safe(url, headers=headers, timeout=15)
                 if res.status_code != 200:
                     for _, id_votacao in lista_votacoes_banco:
                         salvar_checkpoint_transacao(script_senado, id_votacao)

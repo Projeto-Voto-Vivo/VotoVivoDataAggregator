@@ -3,7 +3,7 @@ import sys
 import time
 from dotenv import load_dotenv
 import mysql.connector
-import requests
+from utils.http_client import http_client
 from tqdm import tqdm
 
 load_dotenv()

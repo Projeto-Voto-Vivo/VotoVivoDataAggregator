@@ -1,5 +1,5 @@
 import os
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import time
 import sys
@@ -62,7 +62,7 @@ def vincular_camara():
 
         try:
             url = f"https://dadosabertos.camara.leg.br/api/v2/proposicoes/{id_api}/temas"
-            res = requests.get(url, timeout=30).json().get("dados", [])
+            res = http_client.get_safe(url, timeout=30).json().get("dados", [])
             
             for t in res:
                 id_tema = mapa_temas.get((str(t['codTema']), 'Camara'))
@@ -96,7 +96,7 @@ def vincular_senado():
 
         try:
             url = f"https://legis.senado.leg.br/dadosabertos/processo/{id_api}?v=1"
-            res = requests.get(url, headers={"Accept": "application/json"}, timeout=30).json()
+            res = http_client.get_safe(url, headers={"Accept": "application/json"}, timeout=30).json()
 
             processo = res.get("Processo", {}) if "Processo" in res else res
             classificacoes = processo.get("classificacoes", []) or []

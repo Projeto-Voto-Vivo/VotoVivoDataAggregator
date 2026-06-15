@@ -1,7 +1,7 @@
 import os
 import sys
 import mysql.connector
-import requests
+from utils.http_client import http_client
 
 from dotenv import load_dotenv
 
@@ -122,7 +122,7 @@ def buscar_tipos_das_apis():
     url_camara = "https://dadosabertos.camara.leg.br/api/v2/referencias/proposicoes/siglaTipo"
 
     try:
-        dados = requests.get(url_camara, timeout=15).json().get("dados", [])
+        dados = http_client.get_safe(url_camara, timeout=15).json().get("dados", [])
         print(f"   Encontrados {len(dados)} tipos na API da Câmara")
     except Exception as e:
         print(f"    Erro: {e}")
@@ -131,7 +131,7 @@ def buscar_tipos_das_apis():
     url_senado = "https://legis.senado.leg.br/dadosabertos/materia/tipos"
 
     try:
-        res = requests.get(
+        res = http_client.get_safe(
             url_senado, headers={"Accept": "application/json"}, timeout=15
         ).json()
         lista = (

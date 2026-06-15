@@ -1,5 +1,5 @@
 import os
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import time
 import sys
@@ -54,7 +54,7 @@ def importar_tipo_tramitacao():
 
         try:
             url = f"{BASE_URL}/proposicoes/{id_api}/tramitacoes"
-            res = requests.get(url, timeout=30)
+            res = http_client.get_safe(url, timeout=30)
 
             if res.status_code != 200:
                 salvar_checkpoint_transacao(script_checkpoint, id_interno)

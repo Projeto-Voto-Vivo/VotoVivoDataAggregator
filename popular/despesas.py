@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 import mysql.connector
-import requests
+from utils.http_client import http_client
 from tqdm import tqdm
 
 load_dotenv()
@@ -69,7 +69,7 @@ def buscar_despesas_deputado(id_api_dep, ano, meses):
         while True:
             params = {"ano": ano, "mes": mes, "itens": 100, "pagina": pagina}
             try:
-                r = requests.get(url, params=params, timeout=20)
+                    r = http_client.get_safe(url, params=params, timeout=20)
                 if r.status_code != 200:
                     break
                 data = r.json()
@@ -91,7 +91,7 @@ def processar_despesas_senado_em_bloco(ano):
     url = f"https://adm.senado.gov.br/adm-dadosabertos/api/v1/senadores/despesas_ceaps/{ano}"
     print(f" -> Baixando lote anual do Senado para o ano {ano}...")
     try:
-        r = requests.get(url, timeout=90)
+        r = http_client.get_safe(url, timeout=90)
         return r.json() if r.status_code == 200 else []
     except Exception as e:
         print(f" [!] Erro ao baixar lote do Senado ({ano}): {e}")

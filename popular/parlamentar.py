@@ -1,5 +1,5 @@
-import os
-import requests
+itport os
+from utils.http_client import http_client
 import mysql.connector
 import time
 from tqdm import tqdm
@@ -75,7 +75,7 @@ if pagina > 1:
 
 try:
     while True:
-        response = requests.get(url_camara, params={"pagina": pagina, "itens": 100}, timeout=20)
+        response = http_client.get_safe(url_camara, params={"pagina": pagina, "itens": 100}, timeout=20)
 
         if response.status_code != 200 or not response.text.strip():
             print(" [+] Fim da paginação da API da Câmara atingido.")
@@ -117,7 +117,7 @@ try:
 
             try:
                 detalhe_url = f"https://dadosabertos.camara.leg.br/api/v2/deputados/{id_api}"
-                resp = requests.get(detalhe_url, timeout=10)
+                resp = http_client.get_safe(detalhe_url, timeout=10)
 
                 if resp.status_code == 200:
                     detalhe = resp.json().get("dados", {})
@@ -188,7 +188,7 @@ if checkpoint_senado == f"CONCLUIDO_{data_hoje}":
     print(" [i] Carga diária do Senado Federal já realizada hoje. Etapa pulada.")
 else:
     try:
-        res = requests.get(url_senado, headers=headers, timeout=30)
+        res = http_client.get_safe(url_senado, headers=headers, timeout=30)
 
         if res.status_code == 200:
             lista = res.json()["ListaParlamentarEmExercicio"]["Parlamentares"]["Parlamentar"]
@@ -216,7 +216,7 @@ else:
 
                 try:
                     detalhe_url = f"https://legis.senado.leg.br/dadosabertos/senador/{codigo}"
-                    resp = requests.get(detalhe_url, headers=headers, timeout=10)
+                    resp = http_client.get_safe(detalhe_url, headers=headers, timeout=10)
 
                     if resp.status_code == 200:
                         detalhe = resp.json()

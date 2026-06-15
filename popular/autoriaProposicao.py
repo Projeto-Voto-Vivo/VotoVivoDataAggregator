@@ -1,4 +1,4 @@
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import time
 import sys
@@ -26,7 +26,7 @@ except mysql.connector.Error as err:
 def get_com_retry(url, headers=None, params=None, tentativas=3):
     for tentativa in range(tentativas):
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=60)
+            response = http_client.get_safe(url, headers=headers, params=params, timeout=60)
             if response.status_code == 200:
                 return response
         except requests.exceptions.RequestException:

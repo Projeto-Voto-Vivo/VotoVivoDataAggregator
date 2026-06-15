@@ -1,5 +1,5 @@
 import os
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import time
 import sys
@@ -99,7 +99,7 @@ def importar_tramitacao_camara():
 
         try:
             url = f"{BASE_URL_CAMARA}/proposicoes/{id_api}/tramitacoes"
-            res = requests.get(url, timeout=30)
+            res = http_client.get_safe(url, timeout=30)
 
             if res.status_code != 200:
                 salvar_checkpoint_transacao(script_camara, id_interno)
@@ -164,7 +164,7 @@ def importar_tramitacao_senado():
 
         try:
             url = f"{BASE_URL_SENADO}/materia/movimentacoes/{id_api}"
-            res = requests.get(url, headers=headers, timeout=30)
+            res = http_client.get_safe(url, headers=headers, timeout=30)
 
             if res.status_code != 200:
                 salvar_checkpoint_transacao(script_senado, id_interno)

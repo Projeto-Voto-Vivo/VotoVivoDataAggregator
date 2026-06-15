@@ -1,5 +1,5 @@
 import os
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import time
 import sys
@@ -54,7 +54,7 @@ try:
         
         try:
             time.sleep(0.3)
-            response = requests.get(url_api, timeout=15)
+            response = http_client.get_safe(url_api, timeout=15)
             
             if response.status_code == 200:
                 dados_dep = response.json().get("dados", {})

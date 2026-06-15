@@ -1,4 +1,4 @@
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import time
 import os
@@ -35,7 +35,7 @@ start_time = time.time()
 for (id_api, id_parlamentar) in deputados_db:
     try:
         url = f"https://dadosabertos.camara.leg.br/api/v2/deputados/{id_api}"
-        response = requests.get(url, timeout=15)
+        response = http_client.get_safe(url, timeout=15)
 
         if response.status_code == 200:
             dados = response.json()["dados"]

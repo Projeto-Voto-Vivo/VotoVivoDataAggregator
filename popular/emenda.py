@@ -5,7 +5,7 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 from dotenv import load_dotenv
 import mysql.connector
-import requests
+from utils.http_client import http_client
 
 load_dotenv()
 
@@ -123,15 +123,10 @@ try:
             }
 
             time.sleep(SLEEP_SECONDS)
-            response = requests.get(url_emendas, headers=headers, params=parametros, timeout=30)
+            response = http_client.get_safe(url_emendas, headers=headers, params=parametros, timeout=30)
 
             print(f"\n[Fila] Lendo Ano: {ano} | Página: {pagina} | URL: {response.url}")
             print("Status:", response.status_code)
-
-            if response.status_code == 429:
-                print("Limite da API atingido. Aguardando 60 segundos...")
-                time.sleep(60)
-                response = requests.get(url_emendas, headers=headers, params=parametros, timeout=30)
 
             if response.status_code != 200:
                 print(f"Erro na página {pagina} do ano {ano}: {response.status_code}")
@@ -152,12 +147,7 @@ try:
                 try:
                     url_documentos = f"https://api.portaldatransparencia.gov.br/api-de-dados/emendas/documentos/{codigo_emenda}"
                     time.sleep(SLEEP_SECONDS)
-                    response_documentos = requests.get(url_documentos, headers=headers, timeout=30)
-
-                    if response_documentos.status_code == 429:
-                        print("Limite atingido nos documentos. Aguardando 60 segundos...")
-                        time.sleep(60)
-                        response_documentos = requests.get(url_documentos, headers=headers, timeout=30)
+                    response_documentos = http_client.get_safe(url_documentos, headers=headers, timeout=30)
 
                     documentos_validos = []
                     if response_documentos.status_code == 200:

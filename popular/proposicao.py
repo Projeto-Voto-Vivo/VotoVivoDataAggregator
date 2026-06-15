@@ -4,9 +4,8 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 import mysql.connector
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+
+from utils.http_client import http_client
 
 load_dotenv()
 
@@ -23,15 +22,6 @@ TIPOS_CAMARA = {"PDC", "PL", "PLP", "MPV", "PLV", "PDL", "PEC", "VET"}
 TIPOS_SENADO = {"PLS", "PLC", "PDS", "PEC", "VET", "PL", "PDL", "MPV"}
 TIPOS_CONGRESSO = {"PDC", "PDL", "PLN", "PDN"}
 
-session = requests.Session()
-retries = Retry(
-    total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504]
-)
-session.mount("https://", HTTPAdapter(max_retries=retries))
-
-# =====================================================================
-# LÓGICA DINÂMICA DE DATAS (Substitui os valores em hardcode)
-# =====================================================================
 def gerar_cronograma_dinamico():
     ano_inicio = int(os.getenv("ANO_INICIO_ETL", 2025))
     mes_inicio = int(os.getenv("MES_INICIO_ETL", 5))
@@ -57,7 +47,6 @@ NOMES_MESES = {
     9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
 }
 
-# Atualização de tag do script para não gerar conflito com execuções antigas
 ano_inicio_str = os.getenv("ANO_INICIO_ETL", "2025")
 mes_inicio_str = os.getenv("MES_INICIO_ETL", "5")
 script_camara = "popular/proposicao.py#camara_dinamico"
@@ -220,11 +209,11 @@ def importar_camara_mes(ano, mes):
         print(f"     -> Lendo Página {pagina} da API da Câmara...")
 
         try:
-            res = session.get(url, params=params, timeout=30)
+            # === UTILIZAÇÃO DO HTTP_CLIENT REATORADO ===
+            res = http_client.get_safe(url, params=params, timeout=30)
+            
             if res.status_code != 200:
-                print(
-                    f"       [!] Erro na API da Câmara: Status {res.status_code}"
-                )
+                print(f"       [!] Erro na API da Câmara: Status {res.status_code}")
                 break
 
             dados = res.json().get("dados", [])
@@ -289,9 +278,7 @@ def importar_camara_mes(ano, mes):
                 break
 
         except Exception as e:
-            print(
-                f"       [!] Erro crítico na execução da página {pagina}: {e}"
-            )
+            print(f"       [!] Erro crítico na execução da página {pagina}: {e}")
             if db.in_transaction:
                 db.rollback()
             break
@@ -348,17 +335,10 @@ def importing_senado_mes(ano, mes):
         print(f"     -> Lendo Página {pagina} da API do Senado...")
 
         try:
-            res = session.get(url, params=params, headers=headers, timeout=30)
-
-            if res.status_code == 503:
-                print("       [!] API sobrecarregada (503). Aguardando 10s...")
-                time.sleep(10)
-                continue
+            res = http_client.get_safe(url, params=params, headers=headers, timeout=30)
 
             if res.status_code != 200:
-                print(
-                    f"       [!] Erro na API do Senado: Status {res.status_code}"
-                )
+                print(f"       [!] Erro na API do Senado: Status {res.status_code}")
                 break
 
             processos = res.json()
@@ -463,9 +443,7 @@ def importing_senado_mes(ano, mes):
                 break
 
         except Exception as e:
-            print(
-                f"       [!] Erro crítico na execução da página {pagina}: {e}"
-            )
+            print(f"       [!] Erro crítico na execução da página {pagina}: {e}")
             if db.in_transaction:
                 db.rollback()
             break
@@ -507,9 +485,7 @@ if __name__ == "__main__":
             ano_alvo = bloco["ano"]
             for mes_alvo in bloco["meses"]:
                 print(f"\n{'='*50}")
-                print(
-                    f" PROCESSANDO TIMELINE DE {NOMES_MESES[mes_alvo].upper()}/{ano_alvo}"
-                )
+                print(f" PROCESSANDO TIMELINE DE {NOMES_MESES[mes_alvo].upper()}/{ano_alvo}")
                 print(f"{'='*50}")
 
                 total_camara_mes = importar_camara_mes(ano_alvo, mes_alvo)
@@ -518,25 +494,16 @@ if __name__ == "__main__":
                 total_senado_mes = importing_senado_mes(ano_alvo, mes_alvo)
                 total_senado_geral += total_senado_mes
 
-                historico_consolidado.append(
-                    {
-                        "ano": ano_alvo,
-                        "mes": mes_alvo,
-                        "camara": total_camara_mes,
-                        "senado": total_senado_mes,
-                    }
-                )
+                historico_consolidado.append({
+                    "ano": ano_alvo,
+                    "mes": mes_alvo,
+                    "camara": total_camara_mes,
+                    "senado": total_senado_mes,
+                })
 
-                print(
-                    f"\n RESULTADO PARCIAL {NOMES_MESES[mes_alvo]}/{ano_alvo}:"
-                )
-                print(
-                    f"   Câmara: {total_camara_mes} novas proposições adicionadas"
-                )
-                print(
-                    f"   Senado: {total_senado_mes} novas proposições adicionadas"
-                )
-
+                print(f"\n RESULTADO PARCIAL {NOMES_MESES[mes_alvo]}/{ano_alvo}:")
+                print(f"   Câmara: {total_camara_mes} novas proposições adicionadas")
+                print(f"   Senado: {total_senado_mes} novas proposições adicionadas")
                 time.sleep(1)
 
         print("\n" + "=" * 60)
@@ -544,9 +511,7 @@ if __name__ == "__main__":
         print("=" * 60)
         print(f" Novas Proposições da Câmara: {total_camara_geral}")
         print(f" Novas Proposições do Senado: {total_senado_geral}")
-        print(
-            f" Total de Registros Inseridos: {total_camara_geral + total_senado_geral}"
-        )
+        print(f" Total de Registros Inseridos: {total_camara_geral + total_senado_geral}")
 
         print("\n DETALHAMENTO HISTÓRICO:")
         print("-" * 45)
@@ -555,15 +520,11 @@ if __name__ == "__main__":
         for h in historico_consolidado:
             label = f"{NOMES_MESES[h['mes']][:3]}/{h['ano']}"
             tot = h["camara"] + h["senado"]
-            print(
-                f"   {label:13} | {h['camara']:6} | {h['senado']:6} | {tot:5}"
-            )
+            print(f"   {label:13} | {h['camara']:6} | {h['senado']:6} | {tot:5}")
         print("-" * 45)
 
     except KeyboardInterrupt:
-        print(
-            "\n\n[!] Execução cancelada de forma forçada via terminal. Aplicando Rollback nos lotes..."
-        )
+        print("\n\n[!] Execução cancelada de forma forçada via terminal. Aplicando Rollback nos lotes...")
         if db.in_transaction:
             db.rollback()
     except Exception as e:
@@ -572,4 +533,3 @@ if __name__ == "__main__":
         cursor.close()
         db.close()
         print("\n[+] CONEXÃO COM O BANCO ENCERRADA DE FORMA SEGURA. [FIM]")
-

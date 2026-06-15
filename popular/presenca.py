@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 import mysql.connector
-import requests
+from utils.http_client import http_client
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
@@ -89,7 +89,7 @@ def buscar_justificativa_camara(id_api_deputado, data_str):
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
-        res = requests.get(url, headers=headers, timeout=10)
+        res = http_client.get_safe(url, headers=headers, timeout=10)
         if res.status_code != 200:
             return None
 
@@ -171,7 +171,7 @@ def importar_presencas_camara():
                 }
 
                 try:
-                    res_eventos = requests.get(
+                    res_eventos = http_client.get_safe(
                         url_eventos, params=params, timeout=15
                     )
                     if res_eventos.status_code != 200:
@@ -194,7 +194,7 @@ def importar_presencas_camara():
                         url_presenca = (
                             f"{BASE_URL_CAMARA}/eventos/{id_evento_api}/deputados"
                         )
-                        res_pres = requests.get(url_presenca, timeout=15)
+                        res_pres = http_client.get_safe(url_presenca, timeout=15)
 
                         status_presenca = "AUSENTE"
                         justificativa = None
@@ -283,7 +283,7 @@ def importar_presencas_senado():
                 params = {"dataInicio": data_ini_sen, "dataFim": data_fim_sen}
 
                 try:
-                    res = requests.get(
+                    res = http_client.get_safe(
                         url_reunioes, headers=headers, params=params, timeout=15
                     )
                     if res.status_code != 200:

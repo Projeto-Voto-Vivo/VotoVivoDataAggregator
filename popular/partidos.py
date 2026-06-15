@@ -1,4 +1,4 @@
-import requests
+from utils.http_client import http_client
 import mysql.connector
 import time
 import os  
@@ -34,7 +34,7 @@ total_partidos = 0
 try:
     print("\n Buscando lista de partidos na API...\n")
     
-    response = requests.get(url_partidos, params=params)
+    response = http_client.get_safe(url_partidos, params=params)
     
     if response.status_code == 200:
         partidos = response.json()["dados"]
@@ -51,7 +51,7 @@ try:
             
           
             url_detalhe = f"https://dadosabertos.camara.leg.br/api/v2/partidos/{id_partido_api}"
-            response_detalhe = requests.get(url_detalhe)
+            response_detalhe = http_client.get_safe(url_detalhe)
             
             if response_detalhe.status_code == 200:
                 detalhe = response_detalhe.json()["dados"]

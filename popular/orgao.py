@@ -4,7 +4,7 @@ import time
 from datetime import datetime
 from dotenv import load_dotenv
 import mysql.connector
-import requests
+from utils.http_client import http_client
 from tqdm import tqdm
 
 load_dotenv()
@@ -59,7 +59,7 @@ def extrair_id_orgao(uri):
 def buscar_nome_orgao(id_api):
     try:
         url = f"{BASE_URL_CAMARA}/orgaos/{id_api}"
-        r = requests.get(url, timeout=10)
+        r = http_client.get_safe(url, timeout=10)
         if r.status_code == 200:
             nome = r.json().get("dados", {}).get("nome")
             return nome[:500] if nome else None
@@ -108,7 +108,7 @@ def importar_orgaos_camara():
 
             try:
                 url = f"{BASE_URL_CAMARA}/proposicoes/{id_api}/tramitacoes"
-                res = requests.get(url, timeout=10)
+                res = http_client.get_safe(url, timeout=10)
 
                 if res.status_code != 200:
                     if db.in_transaction:
@@ -197,7 +197,7 @@ def importar_orgaos_senado():
     headers = {"Accept": "application/json"}
 
     try:
-        res = requests.get(url, headers=headers, timeout=15)
+        res = http_client.get_safe(url, headers=headers, timeout=15)
         if res.status_code == 200:
             dados = res.json()
             comissoes = (
