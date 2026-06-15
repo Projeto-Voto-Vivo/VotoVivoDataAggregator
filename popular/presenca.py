@@ -28,8 +28,8 @@ except mysql.connector.Error:
     sys.exit(1)
 
 
-chk_camara = "popular/presenca.py#camara_25_26"
-chk_senado = "popular/presenca.py#senado_25_26"
+chk_camara = "popular/presenca.py#camara_dinamico"
+chk_senado = "popular/presenca.py#senado_dinamico"
 
 
 def obter_ultimo_checkpoint(nome_script, default_value="0"):
@@ -40,19 +40,31 @@ def obter_ultimo_checkpoint(nome_script, default_value="0"):
 
 
 def salvar_checkpoint_transacao(nome_script, valor_parametro):
-    query = """
+    query = '''
         INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
         VALUES (%s, %s)
         ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
-    """
+    '''
     cursor.execute(query, (nome_script, str(valor_parametro)))
 
+def gerar_cronograma_dinamico():
+    ano_inicio = int(os.getenv("ANO_INICIO_ETL", 2025))
+    mes_inicio = int(os.getenv("MES_INICIO_ETL", 5))
+    ano_atual = datetime.now().year
+    mes_atual = datetime.now().month
+    cronograma = []
+    
+    for ano in range(ano_inicio, ano_atual + 1):
+        mes_inicial_do_ano = mes_inicio if ano == ano_inicio else 1
+        mes_final_do_ano = mes_atual if ano == ano_atual else 12
+        if mes_inicial_do_ano <= mes_final_do_ano:
+            cronograma.append({
+                "ano": ano,
+                "meses": list(range(mes_inicial_do_ano, mes_final_do_ano + 1))
+            })
+    return cronograma
 
-
-PERIODOS = [
-    {"ano": 2025, "meses": list(range(5, 13))},  
-    {"ano": 2026, "meses": list(range(1, 6))},   
-]
+PERIODOS = gerar_cronograma_dinamico()
 
 cursor.execute(
     "SELECT idApi, idParlamentar FROM parlamentar WHERE cargo = 'Deputado Federal' ORDER BY idParlamentar ASC"
@@ -105,11 +117,11 @@ def buscar_justificativa_camara(id_api_deputado, data_str):
 
 def registrar_evento(id_api, casa, data_hora, descricao_tipo, id_orgao=None):
     cursor.execute(
-        """
+        '''
         INSERT INTO evento (idApi, casa, idOrgao, dataHoraInicio, descricaoTipo)
         VALUES (%s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE descricaoTipo = VALUES(descricaoTipo)
-    """,
+    ''',
         (str(id_api), casa, id_orgao, data_hora, descricao_tipo),
     )
     db.commit()
@@ -147,8 +159,8 @@ def importar_presencas_camara():
                 data_ini = f"{ano}-{mes:02d}-01"
                 data_fim = (
                     f"{ano}-{mes:02d}-31"
-                    if mes != 2
-                    else f"{ano}-{mes:02d}-28"
+                    if mes not in [2, 4, 6, 9, 11]
+                    else (f"{ano}-{mes:02d}-28" if mes == 2 else f"{ano}-{mes:02d}-30")
                 )
 
                 url_eventos = f"{BASE_URL_CAMARA}/deputados/{id_api_dep}/eventos"
@@ -207,11 +219,11 @@ def importar_presencas_camara():
                                 justificativa = motivo
 
                         cursor.execute(
-                            """
+                            '''
                             INSERT IGNORE INTO presenca (idParlamentar, idEvento, statusPresenca, justificativa)
                             VALUES (%s, %s, %s, %s)
                             ON DUPLICATE KEY UPDATE statusPresenca = VALUES(statusPresenca), justificativa = VALUES(justificativa)
-                        """,
+                        ''',
                             (
                                 id_interno_dep,
                                 id_evento_interno,
@@ -264,7 +276,7 @@ def importar_presencas_senado():
             for mes in bloco["meses"]:
                 data_ini_sen = f"{ano}{mes:02d}01"
                 data_fim_sen = (
-                    f"{ano}{mes:02d}31" if mes != 2 else f"{ano}{mes:02d}28"
+                    f"{ano}{mes:02d}31" if mes not in [2, 4, 6, 9, 11] else (f"{ano}{mes:02d}28" if mes == 2 else f"{ano}{mes:02d}30")
                 )
 
                 url_reunioes = f"{BASE_URL_SENADO}/comissao/{sigla}/reunioes"
@@ -322,10 +334,10 @@ def importar_presencas_senado():
 
                         if batch:
                             cursor.executemany(
-                                """
+                                '''
                                 INSERT IGNORE INTO presenca (idParlamentar, idEvento, statusPresenca, justificativa)
                                 VALUES (%s, %s, %s, %s)
-                            """,
+                            ''',
                                 batch,
                             )
 
@@ -347,3 +359,4 @@ if __name__ == "__main__":
         cursor.close()
         db.close()
         print("\n[+] Execução terminada com segurança. [FIM]")
+

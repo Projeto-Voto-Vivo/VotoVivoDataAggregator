@@ -32,8 +32,7 @@ except mysql.connector.Error as err:
     print(f"Erro de conexão: {err}")
     sys.exit(1)
 
-script_checkpoint = "popular/emenda.py#2025_2026"
-
+script_checkpoint = "popular/emenda.py#dinamico"
 
 def obter_ultimo_checkpoint(nome_script, default_value="2025_1"):
     query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
@@ -41,15 +40,13 @@ def obter_ultimo_checkpoint(nome_script, default_value="2025_1"):
     resultado = cursor.fetchone()
     return resultado[0] if resultado else default_value
 
-
 def salvar_checkpoint_transacao(nome_script, valor_parametro):
-    query = """
+    query = '''
         INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
         VALUES (%s, %s)
         ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
-    """
+    '''
     cursor.execute(query, (nome_script, str(valor_parametro)))
-
 
 def converter_valor(valor):
     if valor is None or valor == "":
@@ -65,7 +62,6 @@ def converter_valor(valor):
     except InvalidOperation:
         return None
 
-
 def converter_data(data):
     if data is None or data == "":
         return None
@@ -78,20 +74,25 @@ def converter_data(data):
             continue
     return None
 
-
 headers = {
     "chave-api-dados": API_KEY,
     "Accept": "application/json"
 }
 
+ANO_INICIO = int(os.getenv("ANO_INICIO_ETL", 2025))
+MES_INICIO = int(os.getenv("MES_INICIO_ETL", 5))
+ANO_ATUAL = datetime.now().year
+MES_ATUAL = datetime.now().month
+
+ANOS_ESCOPO = list(range(ANO_INICIO, ANO_ATUAL + 1))
+
 print("=" * 50)
-print("Buscando emendas parlamentares (Maio/2025 a Maio/2026)...")
+print(f"Buscando emendas parlamentares ({MES_INICIO}/{ANO_INICIO} a {MES_ATUAL}/{ANO_ATUAL})...")
 print("=" * 50)
 
-checkpoint_atual = obter_ultimo_checkpoint(script_checkpoint, default_value="2025_1")
-ano_atual, pagina = map(int, checkpoint_atual.split("_"))
+checkpoint_atual = obter_ultimo_checkpoint(script_checkpoint, default_value=f"{ANO_INICIO}_1")
+ano_atual_chk, pagina = map(int, checkpoint_atual.split("_"))
 
-ANOS_ESCOPO = [2025, 2026]
 contador_emendas = 0
 contador_documentos = 0
 start_time = time.time()
@@ -100,9 +101,9 @@ pagina_limite_teste = pagina + 2
 
 try:
     for ano in ANOS_ESCOPO:
-        if ano < ano_atual:
+        if ano < ano_atual_chk:
             continue
-        if ano > ano_atual:
+        if ano > ano_atual_chk:
             pagina = 1
             pagina_limite_teste = pagina + 2
 
@@ -167,21 +168,26 @@ try:
                         for documento in documentos:
                             data_doc = converter_data(documento.get("data"))
                             if data_doc:
-                                if (ano == 2025 and data_doc.month >= 5) or (ano == 2026 and data_doc.month <= 5):
-                                    documentos_validos.append((documento, data_doc))
+                                # Filtro Dinâmico de Datas
+                                if ano == ANO_INICIO and data_doc.month < MES_INICIO:
+                                    continue
+                                if ano == ANO_ATUAL and data_doc.month > MES_ATUAL:
+                                    continue
+                                
+                                documentos_validos.append((documento, data_doc))
 
-                    if not documentos_validos and ano in [2025, 2026]:
-                        if ano == 2025:
+                    if not documentos_validos and ano in ANOS_ESCOPO:
+                        if ano == ANO_INICIO:
                             continue
 
-                    sql_emenda = """
+                    sql_emenda = '''
                         INSERT IGNORE INTO emenda (
                             codigoEmenda, ano, tipoEmenda, autor, nomeAutor, numeroEmenda,
                             localidadeDoGasto, funcao, subfuncao, valorEmpenhado,
                             valorLiquidado, valorPago, valorRestoInscrito, valorRestoCancelado, valorRestoPago
                         )
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """
+                    '''
                     valores_emenda = (
                         codigo_emenda,
                         emenda.get("ano"),
@@ -199,11 +205,16 @@ try:
                         converter_valor(emenda.get("valorRestoCancelado")),
                         converter_valor(emenda.get("valorRestoPago"))
                     )
+                    
+                    if db.in_transaction: db.commit()
+                    db.start_transaction()
+                    
                     cursor.execute(sql_emenda, valores_emenda)
 
                     cursor.execute("SELECT idEmenda FROM emenda WHERE codigoEmenda = %s", (codigo_emenda,))
                     resultado_emenda = cursor.fetchone()
                     if not resultado_emenda:
+                        db.commit()
                         continue
 
                     id_emenda = resultado_emenda[0]
@@ -214,13 +225,13 @@ try:
                         if not codigo_documento:
                             continue
 
-                        sql_documento = """
+                        sql_documento = '''
                             INSERT IGNORE INTO emendaDocumento (
                                 idEmenda, idApi, codigoEmenda, data, fase,
                                 codigoDocumento, codigoDocumentoResumido, especieTipo, tipoEmenda
                             )
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """
+                        '''
                         valores_documento = (
                             id_emenda,
                             documento.get("id"),
@@ -234,10 +245,12 @@ try:
                         )
                         cursor.execute(sql_documento, valores_documento)
                         contador_documentos += 1
+                        
+                    db.commit()
 
                 except Exception as e:
                     print(f" Erro ao processar emenda {codigo_emenda}: {e}")
-                    db.rollback()
+                    if db.in_transaction: db.rollback()
 
             salvar_checkpoint_transacao(script_checkpoint, f"{ano}_{pagina}")
             db.commit()

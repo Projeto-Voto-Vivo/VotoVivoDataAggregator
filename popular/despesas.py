@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+from datetime import datetime
 from dotenv import load_dotenv
 import mysql.connector
 import requests
@@ -33,17 +34,19 @@ def obter_ultimo_checkpoint(nome_script, default_value="0"):
 
 
 def salvar_checkpoint_transacao(nome_script, valor_parametro):
-    query = """
+    query = '''
         INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
         VALUES (%s, %s)
         ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
-    """
+    '''
     cursor.execute(query, (nome_script, str(valor_parametro)))
 
 
+ANO_INICIO = int(os.getenv("ANO_INICIO_ETL", 2025))
+ANO_ATUAL = datetime.now().year
+MES_ATUAL = datetime.now().month
 
-ANOS_BUSCA = [2025, 2026]
-MESES_COMPLETOS = list(range(1, 13))
+ANOS_BUSCA = list(range(ANO_INICIO, ANO_ATUAL + 1))
 
 
 script_camara = "popular/despesas.py#camara_25_26"
@@ -101,6 +104,8 @@ try:
     for ano in ANOS_BUSCA:
         print(f"\n--- INICIANDO PROCESSAMENTO DO ANO {ano} ---")
 
+        meses_filtrados = list(range(1, MES_ATUAL + 1)) if ano == ANO_ATUAL else list(range(1, 13))
+
         print(f"[CÂMARA] Analisando despesas para {len(deputados)} deputados...")
 
         checkpoint_camara_atual = obter_ultimo_checkpoint(script_camara, default_value="0_0")
@@ -108,7 +113,6 @@ try:
 
         start_time = time.time()
         for id_api, id_interno, _ in tqdm(deputados, desc=f"Deputados {ano}"):
-            # Validação do checkpoint adaptado
             if ano < ano_chk:
                 continue
             if ano == ano_chk and id_interno <= id_interno_chk:
@@ -136,11 +140,11 @@ try:
 
             if batch:
                 cursor.executemany(
-                    """
+                    '''
                     INSERT IGNORE INTO despesa 
                     (idParlamentar, dataDespesa, valor, fornecedorNome, fornecedorCnpjCpf, notaFiscalUrl, categoria)
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
+                ''',
                     batch,
                 )
                 total_inserido += len(batch)
@@ -155,7 +159,6 @@ try:
         print(f"[SENADO] Analisando lote de despesas dos senadores...")
         checkpoint_senado_atual = obter_ultimo_checkpoint(script_senado, default_value="0")
         
-        
         if ano <= int(checkpoint_senado_atual):
             print(
                 f" [i] Lote anual do Senado para {ano} já foi processado anteriormente nesta execução. Pulando."
@@ -168,10 +171,8 @@ try:
                 for d in tqdm(lote_senado, desc=f"Senadores {ano}"):
                     id_api_sen = str(d.get("codSenador"))
 
-                    # Filtro estrito de data para o Senado (já que a API deles só entrega o bloco anual de uma vez)
                     data_despesa_str = d.get("data")
                     if data_despesa_str:
-                        # Extrai o mês da string de data (ex: '2025-05-12' -> 5)
                         mes_despesa = int(data_despesa_str.split("-")[1])
                         if mes_despesa not in meses_filtrados:
                             continue
@@ -197,11 +198,11 @@ try:
 
                 if batch_senado:
                     cursor.executemany(
-                        """
+                        '''
                         INSERT IGNORE INTO despesa 
                         (idParlamentar, dataDespesa, valor, fornecedorNome, fornecedorCnpjCpf, notaFiscalUrl, categoria)
                         VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    """,
+                    ''',
                         batch_senado,
                     )
                     total_inserido += len(batch_senado)

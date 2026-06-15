@@ -29,10 +29,27 @@ retries = Retry(
 )
 session.mount("https://", HTTPAdapter(max_retries=retries))
 
-CRONOGRAMA_BUSCA = [
-    {"ano": 2025, "meses": list(range(5, 13))},
-    {"ano": 2026, "meses": list(range(1, 6))},
-]
+# =====================================================================
+# LÓGICA DINÂMICA DE DATAS (Substitui os valores em hardcode)
+# =====================================================================
+def gerar_cronograma_dinamico():
+    ano_inicio = int(os.getenv("ANO_INICIO_ETL", 2025))
+    mes_inicio = int(os.getenv("MES_INICIO_ETL", 5))
+    ano_atual = datetime.now().year
+    mes_atual = datetime.now().month
+    cronograma = []
+    
+    for ano in range(ano_inicio, ano_atual + 1):
+        mes_inicial_do_ano = mes_inicio if ano == ano_inicio else 1
+        mes_final_do_ano = mes_atual if ano == ano_atual else 12
+        if mes_inicial_do_ano <= mes_final_do_ano:
+            cronograma.append({
+                "ano": ano,
+                "meses": list(range(mes_inicial_do_ano, mes_final_do_ano + 1))
+            })
+    return cronograma
+
+CRONOGRAMA_BUSCA = gerar_cronograma_dinamico()
 
 NOMES_MESES = {
     1: "Janeiro", 2: "Fevereiro", 3: "Março", 4: "Abril",
@@ -40,8 +57,11 @@ NOMES_MESES = {
     9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro",
 }
 
-script_camara = "popular/proposicao.py#camara_25_26"
-script_senado = "popular/proposicao.py#senado_25_26"
+# Atualização de tag do script para não gerar conflito com execuções antigas
+ano_inicio_str = os.getenv("ANO_INICIO_ETL", "2025")
+mes_inicio_str = os.getenv("MES_INICIO_ETL", "5")
+script_camara = "popular/proposicao.py#camara_dinamico"
+script_senado = "popular/proposicao.py#senado_dinamico"
 
 try:
     db = mysql.connector.connect(
@@ -57,7 +77,7 @@ except mysql.connector.Error as err:
     sys.exit(1)
 
 
-def obter_ultimo_checkpoint(nome_script, default_value="2025_5_1"):
+def obter_ultimo_checkpoint(nome_script, default_value=f"{ano_inicio_str}_{mes_inicio_str}_1"):
     query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
     cursor.execute(query, (nome_script,))
     resultado = cursor.fetchone()
@@ -65,11 +85,11 @@ def obter_ultimo_checkpoint(nome_script, default_value="2025_5_1"):
 
 
 def salvar_checkpoint_transacao(nome_script, valor_parametro):
-    query = """
+    query = '''
         INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
         VALUES (%s, %s)
         ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
-    """
+    '''
     cursor.execute(query, (nome_script, str(valor_parametro)))
 
 
@@ -80,11 +100,6 @@ for id_, sigla, casa in cursor.fetchall():
     tipos_cache[(sigla.upper(), casa)] = id_
 
 
-def garantizar_tipo(sigla, casa):
-    # Criada a função alternativa em portunhol para o caso de algum outro script a chamar
-    return garantir_tipo(sigla, casa)
-
-
 def garantir_tipo(sigla, casa):
     chave = (sigla.upper(), casa)
 
@@ -92,10 +107,10 @@ def garantir_tipo(sigla, casa):
         return tipos_cache[chave]
 
     cursor.execute(
-        """
+        '''
         SELECT idTipoProposicao FROM tipoProposicao 
         WHERE sigla = %s AND casa = %s
-    """,
+    ''',
         (sigla.upper(), casa),
     )
 
@@ -132,10 +147,10 @@ def garantir_tipo(sigla, casa):
     print(f" CRIANDO TIPO INEXISTENTE: {sigla} ({casa}) - {nome_completo}")
 
     cursor.execute(
-        """
+        '''
         INSERT INTO tipoProposicao (sigla, nome, casa)
         VALUES (%s, %s, %s)
-    """,
+    ''',
         (sigla.upper(), nome_completo, casa),
     )
 
@@ -176,7 +191,7 @@ def importar_camara_mes(ano, mes):
     print(f"\n    [CÂMARA] {mes_nome}/{ano}: {data_inicio} a {data_fim}")
 
     checkpoint_atual = obter_ultimo_checkpoint(
-        script_camara, default_value="2025_5_1"
+        script_camara, default_value=f"{ano_inicio_str}_{mes_inicio_str}_1"
     )
     ano_chk, mes_chk, pagina_chk = map(int, checkpoint_atual.split("_"))
 
@@ -184,7 +199,6 @@ def importar_camara_mes(ano, mes):
         print(
             f"      [i] Período {mes}/{ano} já concluído em execuções anteriores. FORÇANDO RETOMADA."
         )
-        # return 0  <--- COMENTADO PARA FORÇAR A CARGA COMPLETA
 
     url = "https://dadosabertos.camara.leg.br/api/v2/proposicoes"
     params = {
@@ -235,11 +249,11 @@ def importar_camara_mes(ano, mes):
                 id_tipo = garantir_tipo(sigla, "Camara")
 
                 cursor.execute(
-                    """
+                    '''
                     INSERT IGNORE INTO proposicao
                     (idApi, idTipoProposicao, numero, ano, ementa, statusAtual)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                """,
+                ''',
                     (
                         id_api,
                         id_tipo,
@@ -305,7 +319,7 @@ def importing_senado_mes(ano, mes):
     print(f"\n    [SENADO] {mes_nome}/{ano}: {data_inicio} a {data_fim}")
 
     checkpoint_atual = obter_ultimo_checkpoint(
-        script_senado, default_value="2025_5_1"
+        script_senado, default_value=f"{ano_inicio_str}_{mes_inicio_str}_1"
     )
     ano_chk, mes_chk, pagina_chk = map(int, checkpoint_atual.split("_"))
 
@@ -313,7 +327,6 @@ def importing_senado_mes(ano, mes):
         print(
             f"      [i] Período {mes}/{ano} já concluído em execuções anteriores. FORÇANDO RETOMADA."
         )
-        # return 0  <--- COMENTADO PARA FORÇAR A CARGA COMPLETA
 
     url = "https://legis.senado.leg.br/dadosabertos/processo"
     params = {
@@ -409,11 +422,11 @@ def importing_senado_mes(ano, mes):
                 ano_final = int(ano_proposicao) if ano_proposicao else None
 
                 cursor.execute(
-                    """
+                    '''
                     INSERT INTO proposicao
                     (idApi, idTipoProposicao, numero, ano, ementa, statusAtual)
                     VALUES (%s, %s, %s, %s, %s, %s)
-                """,
+                ''',
                     (
                         id_api,
                         id_tipo,
@@ -473,8 +486,8 @@ def importing_senado_mes(ano, mes):
 if __name__ == "__main__":
     try:
         print("=" * 60)
-        print(" IMPORTANDO PROPOSIÇÕES DO CONGRESSO (SISTEMA PROTEGIDO)")
-        print(" PERÍODO FOCO: MAIO DE 2025 ATÉ MAIO DE 2026")
+        print(" IMPORTANDO PROPOSIÇÕES DO CONGRESSO")
+        print(" PERÍODO FOCO: BASEADO EM .ENV")
         print("=" * 60)
 
         print("\n Verificando tabelas de tipos de suporte no banco...")
@@ -559,3 +572,4 @@ if __name__ == "__main__":
         cursor.close()
         db.close()
         print("\n[+] CONEXÃO COM O BANCO ENCERRADA DE FORMA SEGURA. [FIM]")
+
