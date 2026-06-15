@@ -1,13 +1,26 @@
 import os
 import sys
 import time
+import logging
+import requests
 from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
 import mysql.connector
 from bs4 import BeautifulSoup
-from tqdm import tqdm
 
 from utils.http_client import http_client
+
+# ==========================================
+# CONFIGURAÇÃO DE LOGS
+# ==========================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger("PresencaETL")
 
 load_dotenv()
 
@@ -25,17 +38,29 @@ try:
         database=os.getenv("DB_NAME", "votoVivo"),
     )
     cursor = db.cursor()
-except mysql.connector.Error:
+    logger.info("Conexão com o banco de dados estabelecida.")
+except mysql.connector.Error as e:
+    logger.error(f"Erro ao conectar ao banco: {e}")
     sys.exit(1)
 
-chk_camara = "popular/presenca.py#camara_dinamico_v2"
-chk_senado = "popular/presenca.py#senado_dinamico_v2"
+chk_camara = "popular/presenca.py#camara_logs_cb2"
+chk_senado = "popular/presenca.py#senado_logs_cb2"
+
+# ==========================================
+# CIRCUIT BREAKER (Disjuntor) PARA O SCRAPING
+# ==========================================
+scraping_camara_indisponivel = False
+falhas_consecutivas_scraping = 0
+LIMITE_FALHAS = 5
 
 def obter_ultimo_checkpoint(nome_script, default_value="0"):
     query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
     cursor.execute(query, (nome_script,))
     resultado = cursor.fetchone()
-    return resultado[0] if resultado else default_value
+    if resultado:
+        logger.debug(f"Checkpoint recuperado para {nome_script}: {resultado[0]}")
+        return resultado[0]
+    return default_value
 
 def salvar_checkpoint_transacao(nome_script, valor_parametro):
     query = '''
@@ -75,16 +100,31 @@ cursor.execute("SELECT idApi, idParlamentar FROM parlamentar WHERE cargo = 'Sena
 map_senadores = {str(row[0]): row[1] for row in cursor.fetchall()}
 
 def buscar_justificativa_camara(id_api_deputado, data_str):
+    global scraping_camara_indisponivel, falhas_consecutivas_scraping
+    
+    if scraping_camara_indisponivel:
+        return None
+        
     if not data_str: return None
     ano = data_str[:4]
     data_formatada = f"{data_str[8:10]}/{data_str[5:7]}/{ano}"
     url = f"https://www.camara.leg.br/deputados/{id_api_deputado}/presenca-plenario/{ano}"
+    
     try:
         headers = {"User-Agent": "Mozilla/5.0"}
-        res = http_client.get_safe(url, headers=headers, timeout=10)
-        if res.status_code != 200: return None
+        res = requests.get(url, headers=headers, timeout=5)
+        
+        if res.status_code != 200:
+            falhas_consecutivas_scraping += 1
+            if falhas_consecutivas_scraping == LIMITE_FALHAS: 
+                logger.warning("[CIRCUIT BREAKER] Página da Câmara offline. Scraping de justificativas desativado nesta execução.")
+                scraping_camara_indisponivel = True
+            return None
+            
+        falhas_consecutivas_scraping = 0
         soup = BeautifulSoup(res.text, "lxml")
         tabelas = soup.find_all("table")
+        
         for tabela in tabelas:
             linhas = tabela.find_all("tr")
             for linha in linhas:
@@ -96,7 +136,11 @@ def buscar_justificativa_camara(id_api_deputado, data_str):
                         if any(x in texto_presenca for x in ["licença", "missão", "justificada"]):
                             return colunas[2].text.strip()[:255]
         return None
-    except Exception:
+    except Exception as e:
+        falhas_consecutivas_scraping += 1
+        if falhas_consecutivas_scraping == LIMITE_FALHAS:
+            logger.warning(f"[CIRCUIT BREAKER] Falhas de conexão. Scraping desativado.")
+            scraping_camara_indisponivel = True
         return None
 
 def registrar_evento(id_api, casa, data_hora, descricao_tipo, id_orgao=None):
@@ -111,12 +155,22 @@ def registrar_evento(id_api, casa, data_hora, descricao_tipo, id_orgao=None):
 
 def importar_presencas_camara():
     if not deputados_banco: return
+    
+    logger.info("="*50)
+    logger.info("INICIANDO IMPORTAÇÃO DE PRESENÇAS DA CÂMARA")
+    logger.info("="*50)
+    
     checkpoint_atual = int(obter_ultimo_checkpoint(chk_camara, default_value="0"))
     fila_deputados = [d for d in deputados_banco if d[1] > checkpoint_atual]
     start_time = time.time()
+    total_eventos = 0
 
-    for id_api_dep, id_interno_dep in tqdm(fila_deputados, desc="Deputados (Câmara)"):
-        if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos: break
+    for id_api_dep, id_interno_dep in fila_deputados:
+        if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos: 
+            logger.warning("Limite de tempo atingido (Câmara).")
+            break
+
+        logger.info(f"Processando Deputado ID Interno: {id_interno_dep} (API: {id_api_dep})")
 
         for bloco in PERIODOS:
             ano = bloco["ano"]
@@ -168,7 +222,10 @@ def importar_presencas_camara():
                             ON DUPLICATE KEY UPDATE statusPresenca = VALUES(statusPresenca), justificativa = VALUES(justificativa)
                         ''', (id_interno_dep, id_evento_interno, status_presenca, justificativa))
                         db.commit()
-                except Exception:
+                        total_eventos += 1
+                        
+                except Exception as e:
+                    logger.error(f"Erro ao processar eventos do deputado {id_api_dep}: {e}")
                     if db.in_transaction: db.rollback()
                     continue
 
@@ -176,24 +233,36 @@ def importar_presencas_camara():
         db.start_transaction()
         salvar_checkpoint_transacao(chk_camara, id_interno_dep)
         db.commit()
-        time.sleep(0.1)
+        
+    logger.info(f"Concluído Câmara: {total_eventos} registos de presença/ausência processados.")
 
 def importar_presencas_senado():
     cursor.execute("SELECT idOrgao, idApi, sigla FROM orgao WHERE (casa = 'Senado' OR casa = 'Congresso') ORDER BY idOrgao ASC")
     comissoes = cursor.fetchall()
     if not comissoes: return
+    
+    logger.info("="*50)
+    logger.info("INICIANDO IMPORTAÇÃO DE PRESENÇAS DO SENADO")
+    logger.info("="*50)
+    
     checkpoint_atual = int(obter_ultimo_checkpoint(chk_senado, default_value="0"))
     fila_comissoes = [c for c in comissoes if c[0] > checkpoint_atual]
 
     start_time = time.time()
     headers = {"Accept": "application/json"}
+    total_eventos = 0
 
-    for id_orgao, id_api_orgao, sigla in tqdm(fila_comissoes, desc="Comissões (Senado)"):
-        if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos: break
+    for id_orgao, id_api_orgao, sigla in fila_comissoes:
+        if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos: 
+            logger.warning("Limite de tempo atingido (Senado).")
+            break
+            
         if not sigla or sigla == "N/A":
             salvar_checkpoint_transacao(chk_senado, id_orgao)
             db.commit()
             continue
+            
+        logger.info(f"Processando Comissão/Órgão: {sigla} (ID Interno: {id_orgao})")
 
         for bloco in PERIODOS:
             ano = bloco["ano"]
@@ -237,8 +306,10 @@ def importar_presencas_senado():
                                 INSERT IGNORE INTO presenca (idParlamentar, idEvento, statusPresenca, justificativa)
                                 VALUES (%s, %s, %s, %s)
                             ''', batch)
+                            total_eventos += len(batch)
                         db.commit()
-                except Exception:
+                except Exception as e:
+                    logger.error(f"Erro ao processar reunião da comissão {sigla}: {e}")
                     if db.in_transaction: db.rollback()
                     continue
 
@@ -246,14 +317,18 @@ def importar_presencas_senado():
         db.start_transaction()
         salvar_checkpoint_transacao(chk_senado, id_orgao)
         db.commit()
-        time.sleep(0.1)
+
+    logger.info(f"Concluído Senado: {total_eventos} registos de presença processados.")
 
 if __name__ == "__main__":
     try:
         importar_presencas_camara()
         importar_presencas_senado()
-    except KeyboardInterrupt: pass
+    except KeyboardInterrupt: 
+        logger.warning("Execução cancelada via terminal.")
+    except Exception as e:
+        logger.critical(f"Erro crítico: {e}")
     finally:
         cursor.close()
         db.close()
-        print("\n[+] Execução terminada com segurança. [FIM]")
+        logger.info("[+] Execução terminada com segurança. [FIM]")
