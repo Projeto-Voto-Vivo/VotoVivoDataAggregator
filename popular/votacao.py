@@ -39,7 +39,7 @@ except mysql.connector.Error as e:
     sys.exit(1)
 
 script_camara = "popular/votacao.py#camara_logs"
-script_senado = "popular/votacao.py#senado_logs_enums_rigidos"
+script_senado = "popular/votacao.py#senado_logs_ausencia_justificada"
 
 def obter_ultimo_checkpoint(nome_script, default_value="2025_5_1"):
     query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
@@ -372,9 +372,18 @@ def importar_votacoes_e_votos_senado():
                                 voto_enum = "NAO"
                             elif voto_sigla in ["ABSTENÇÃO", "ABSTENCAO", "ABS"]: 
                                 voto_enum = "ABSTENCAO"
-                            else:
+                            elif voto_sigla in ["P-NRV", "NR", "VS", "SI", "NH", "PR", "PS", "EP", "EPR", "OB", "P-OD"]:
+                                # Presente sem voto, Obstrução ou regimentos de mesa
+                                voto_enum = "SEM REGISTRO"
+                            elif voto_sigla in ["AUS", "NCOM"]:
+                                # Faltas puras
                                 voto_enum = "AUSENTE"
+                            else:
+                                # L1, L2, MIS, REP, AFO, LAP, etc. (Todas as licenças e missões)
+                                voto_enum = "AUSENCIA JUSTIFICADA"
                                 
+                            if not voto_enum: continue
+
                             id_api_voto = f"{id_api_votacao}_{id_sen_api}"
                             batch_votos.append((map_parlamentares[id_sen_api], id_votacao_interno, id_api_voto, voto_enum))
 

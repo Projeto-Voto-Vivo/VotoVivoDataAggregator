@@ -37,7 +37,7 @@ except mysql.connector.Error as err:
     logger.error(f"Erro de conexão: {err}")
     sys.exit(1)
 
-script_camara = "popular/voto.py#camara_logs_enums_rigidos"
+script_camara = "popular/voto.py#camara_logs_ausencia_justificada"
 
 def obter_ultimo_checkpoint(nome_script, default_value="0"):
     query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
@@ -82,7 +82,6 @@ def importar_votos_camara():
                 logger.warning("Tempo limite atingido para Votos da Câmara.")
                 break
             
-            # Print menos verboso para não floodar o terminal
             if index % 50 == 0:
                 logger.info(f"Processando votação {index}/{len(votacoes)} (ID: {id_votacao})...")
 
@@ -112,8 +111,14 @@ def importar_votos_camara():
                             voto_enum = "NAO"
                         elif "absten" in voto_txt: 
                             voto_enum = "ABSTENCAO"
-                        else: 
+                        elif any(palavra in voto_txt for palavra in ["justificad", "licença", "missão", "afastament"]):
+                            # Cobre casos raros mas possíveis de "Ausência Justificada", "Licença Médica", etc. na Camara
+                            voto_enum = "AUSENCIA JUSTIFICADA"
+                        elif voto_txt == "ausente" or "ausência" in voto_txt:
                             voto_enum = "AUSENTE"
+                        else: 
+                            # Cobre coisas como "Obstrução", "Artigo 17", "Branco", Votações Secretas
+                            voto_enum = "SEM REGISTRO"
 
                         id_api_voto = f"{id_api_votacao}_{id_dep_api}"
                         batch.append((map_parlamentares[id_dep_api], id_votacao, id_api_voto, voto_enum))

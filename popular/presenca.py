@@ -116,7 +116,7 @@ def buscar_justificativa_camara(id_api_deputado, data_str):
         
         if res.status_code != 200:
             falhas_consecutivas_scraping += 1
-            if falhas_consecutivas_scraping == LIMITE_FALHAS: 
+            if falhas_consecutivas_scraping == LIMITE_FALHAS:
                 logger.warning("[CIRCUIT BREAKER] Página da Câmara offline. Scraping de justificativas desativado nesta execução.")
                 scraping_camara_indisponivel = True
             return None
@@ -210,7 +210,7 @@ def importar_presencas_camara():
                             data_str = data_hora.split("T")[0] if data_hora else None
                             motivo = buscar_justificativa_camara(id_api_dep, data_str)
                             if motivo:
-                                status_presenca = "JUSTIFICADA"
+                                status_presenca = "AUSENCIA JUSTIFICADA"
                                 justificativa = motivo
                         
                         if db.in_transaction: db.commit()
@@ -317,6 +317,7 @@ def importar_presencas_senado():
         db.start_transaction()
         salvar_checkpoint_transacao(chk_senado, id_orgao)
         db.commit()
+        time.sleep(0.1)
 
     logger.info(f"Concluído Senado: {total_eventos} registos de presença processados.")
 

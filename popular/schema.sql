@@ -100,7 +100,7 @@ CREATE TABLE voto (
     idParlamentar INT NOT NULL,
     idVotacao INT NOT NULL,
     idApi VARCHAR(50) UNIQUE NOT NULL,
-    votoRegistrado ENUM('SIM', 'NAO', 'ABSTENCAO', 'AUSENTE'),
+    votoRegistrado ENUM('SIM', 'NAO', 'ABSTENCAO', 'AUSENTE', 'SEM REGISTRO', 'AUSENCIA JUSTIFICADA') NOT NULL,
 
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
