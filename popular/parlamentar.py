@@ -1,4 +1,4 @@
-itport os
+import os
 from utils.http_client import http_client
 import mysql.connector
 import time
