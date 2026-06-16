@@ -94,7 +94,7 @@ def importar_orgaos_camara():
     try:
         for (id_api,) in tqdm(proposicoes, desc="Processando órgãos (Câmara)", unit="proposição"):
 
-            if id_api <= ultimo_id_proposicao_chk:
+            if int(id_api) <= int(ultimo_id_proposicao_chk):
                 continue
 
             if (
