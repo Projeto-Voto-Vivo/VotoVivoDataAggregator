@@ -1,5 +1,5 @@
-CREATE DATABASE IF NOT EXISTS votoVivo;
-USE votoVivo;
+CREATE DATABASE IF NOT EXISTS votovivo;
+USE votovivo;
 
 
 CREATE TABLE etlCheckpoint (
@@ -14,7 +14,7 @@ CREATE TABLE etlCheckpoint (
 
 CREATE TABLE parlamentar (
     idParlamentar INT AUTO_INCREMENT PRIMARY KEY,
-    idApi INT UNIQUE NOT NULL,
+    idApi VARCHAR(50) UNIQUE NOT NULL,
     cargo VARCHAR(50),
     nomeCivil VARCHAR(255),
     nomeUrna VARCHAR(255),
@@ -37,7 +37,7 @@ CREATE TABLE tipoProposicao (
 
 CREATE TABLE proposicao (
     idProposicao INT AUTO_INCREMENT PRIMARY KEY,
-    idApi INT UNIQUE NOT NULL,
+    idApi VARCHAR(50) UNIQUE NOT NULL,
     idTipoProposicao INT,
     numero VARCHAR(20),
     ano INT,
@@ -157,7 +157,7 @@ CREATE TABLE despesa (
 
 CREATE TABLE tipoTramitacao (
     idTipoTramitacao INT AUTO_INCREMENT PRIMARY KEY,
-    idApi INT UNIQUE NOT NULL,
+    idApi VARCHAR(50) UNIQUE NOT NULL,
     descricao VARCHAR(255),
     regime VARCHAR(100)
 );
@@ -233,7 +233,7 @@ CREATE TABLE IF NOT EXISTS emenda (
 CREATE TABLE IF NOT EXISTS emendaDocumento (
     idEmendaDocumento INT AUTO_INCREMENT PRIMARY KEY,
     idEmenda INT NOT NULL,
-    idApi INT,
+    idApi VARCHAR(50),
     codigoEmenda VARCHAR(100) NOT NULL,
     data DATE,
     fase VARCHAR(100),
