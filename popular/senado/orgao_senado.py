@@ -79,10 +79,11 @@ def processar_orgaos_senado():
     ultimo_senador_processado = chk_manager.obter(nome_script, "0")
     
     sql_orgao = """
-        INSERT INTO orgao (idApi, sigla, nome, casa)
-        VALUES (%s, %s, %s, %s)
-        ON DUPLICATE KEY UPDATE sigla=VALUES(sigla), nome=VALUES(nome), casa=VALUES(casa)
+        INSERT INTO orgao (idApi, sigla, nome, tipoOrgao, casa)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE sigla=VALUES(sigla), nome=VALUES(nome), tipoOrgao=VALUES(tipoOrgao)
     """
+
     sql_get_orgao_id = "SELECT idOrgao FROM orgao WHERE idApi = %s AND casa IN ('Senado', 'Congresso')"
     sql_membro = "INSERT IGNORE INTO membroOrgao (idParlamentar, idOrgao, cargo) VALUES (%s, %s, %s)"
 
@@ -128,6 +129,7 @@ def processar_orgaos_senado():
                 id_orgao_api = get_xml_text(comissao_xml, 'CodigoComissao')
                 sigla_orgao = get_xml_text(comissao_xml, 'SiglaComissao')
                 nome_orgao = get_xml_text(comissao_xml, 'NomeComissao')
+                tipo_orgao = 'Comissão'
                 sigla_casa = get_xml_text(comissao_xml, 'SiglaCasaComissao')
                 cargo_parlamentar = get_xml_text(comissao_xml, 'DescricaoParticipacao')
                 data_fim = get_xml_text(comissao_xml, 'DataFim')
@@ -145,7 +147,7 @@ def processar_orgaos_senado():
                 try:
                     # 1. Inserir ou recuperar Órgão (Graças à riqueza do XML do Senado, não precisamos de ir buscar os detalhes)
                     if id_orgao_api not in map_orgaos:
-                        cursor.execute(sql_orgao, (id_orgao_api, sigla_orgao, nome_orgao, casa_db))
+                        cursor.execute(sql_orgao, (id_orgao_api, sigla_orgao, nome_orgao, tipo_orgao, casa_db))
                         
                         cursor.execute(sql_get_orgao_id, (id_orgao_api,))
                         resultado_id = cursor.fetchone()

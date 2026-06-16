@@ -70,7 +70,8 @@ CREATE TABLE orgao (
     idApi VARCHAR(50) UNIQUE NOT NULL,
     sigla VARCHAR(50),
     nome VARCHAR(500),
-    casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL
+    casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL,
+	  tipoOrgao VARCHAR(100) NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE membroOrgao (

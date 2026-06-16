@@ -79,10 +79,11 @@ def processar_orgaos_camara():
     ultimo_deputado_processado = chk_manager.obter(nome_script, "0")
     
     sql_orgao = """
-        INSERT INTO orgao (idApi, sigla, nome, casa)
-        VALUES (%s, %s, %s, 'Camara')
-        ON DUPLICATE KEY UPDATE sigla=VALUES(sigla), nome=VALUES(nome)
+        INSERT INTO orgao (idApi, sigla, nome, tipoOrgao, casa)
+        VALUES (%s, %s, %s, %s, 'Camara')
+        ON DUPLICATE KEY UPDATE sigla=VALUES(sigla), nome=VALUES(nome), tipoOrgao=VALUES(tipoOrgao)
     """
+
     sql_get_orgao_id = "SELECT idOrgao FROM orgao WHERE idApi = %s AND casa = 'Camara'"
     sql_membro = "INSERT IGNORE INTO membroOrgao (idParlamentar, idOrgao, cargo) VALUES (%s, %s, %s)"
 
@@ -145,8 +146,9 @@ def processar_orgaos_camara():
                         
                         sigla_final = detalhes.get('sigla') if detalhes else org_basico.get('siglaOrgao')
                         nome_final = detalhes.get('nome') if detalhes else org_basico.get('nomeOrgao')
+                        tipo_orgao = detalhes.get('tipoOrgao') if detalhes else 'Comissão'
                         
-                        cursor.execute(sql_orgao, (id_orgao_api, sigla_final, nome_final))
+                        cursor.execute(sql_orgao, (id_orgao_api, sigla_final, nome_final, tipo_orgao))
                         
                         cursor.execute(sql_get_orgao_id, (id_orgao_api,))
                         id_orgao_interno = cursor.fetchone()[0]
