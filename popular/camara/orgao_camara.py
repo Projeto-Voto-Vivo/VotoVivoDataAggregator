@@ -1,0 +1,181 @@
+import os
+import time
+import logging
+import mysql.connector
+from datetime import datetime
+from dotenv import load_dotenv
+from utils.http_client import http_client 
+from utils.checkpoint_manager import CheckpointManager
+
+# ---------------------------------------------------------
+# 1. CONFIGURAÇÃO DE LOGGING
+# ---------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("ETL_Orgao_Camara")
+
+load_dotenv()
+
+DB_CONFIG = {
+    'host': os.getenv("DB_HOST", "localhost"),
+    'user': os.getenv("DB_USER", "root"),
+    'password': os.getenv("DB_PASSWORD", ""),
+    'database': os.getenv("DB_NAME", "votovivo")
+}
+
+BASE_URL = 'https://dadosabertos.camara.leg.br/api/v2'
+
+# ---------------------------------------------------------
+# 2. FUNÇÕES DE BANCO E CACHE
+# ---------------------------------------------------------
+def conectar_db():
+    try:
+        conexao = mysql.connector.connect(**DB_CONFIG)
+        logger.info("Conexão com o banco de dados estabelecida com sucesso.")
+        return conexao
+    except mysql.connector.Error as err:
+        logger.error(f"Erro crítico de conexão com o banco: {err}")
+        exit(1)
+
+def obter_deputados_ativos(cursor):
+    cursor.execute("SELECT idParlamentar, idApi, nomeUrna FROM parlamentar WHERE cargo = 'Deputado(a)'")
+    return cursor.fetchall()
+
+def carregar_cache_orgaos(cursor):
+    """Carrega os órgãos já existentes no banco para a memória, evitando chamadas repetidas à API"""
+    cursor.execute("SELECT idApi, idOrgao FROM orgao WHERE casa = 'Camara'")
+    return {str(row[0]): row[1] for row in cursor.fetchall()}
+
+def buscar_detalhes_orgao(id_orgao_api):
+    url = f"{BASE_URL}/orgaos/{id_orgao_api}"
+    
+    max_tentativas = 3
+    for tentativa in range(1, max_tentativas + 1):
+        resp = http_client.get(url, headers={'accept': 'application/json'})
+        if resp.status_code == 200:
+            return resp.json().get('dados', {})
+        elif resp.status_code in [429, 500, 502, 503, 504]:
+            time.sleep(2 * tentativa)
+        else:
+            break
+    return None
+
+# ---------------------------------------------------------
+# 3. LÓGICA DE EXTRAÇÃO E INSERÇÃO
+# ---------------------------------------------------------
+def processar_orgaos_camara():
+    conexao = conectar_db()
+    cursor = conexao.cursor()
+    chk_manager = CheckpointManager(conexao)
+    nome_script = "orgao_camara_v1"
+    
+    deputados = obter_deputados_ativos(cursor)
+    map_orgaos = carregar_cache_orgaos(cursor)
+    
+    total_deputados = len(deputados)
+    ultimo_deputado_processado = chk_manager.obter(nome_script, "0")
+    
+    sql_orgao = """
+        INSERT INTO orgao (idApi, sigla, nome, casa)
+        VALUES (%s, %s, %s, 'Camara')
+        ON DUPLICATE KEY UPDATE sigla=VALUES(sigla), nome=VALUES(nome)
+    """
+    sql_get_orgao_id = "SELECT idOrgao FROM orgao WHERE idApi = %s AND casa = 'Camara'"
+    sql_membro = "INSERT IGNORE INTO membroOrgao (idParlamentar, idOrgao, cargo) VALUES (%s, %s, %s)"
+
+    for i, (id_parlamentar, id_api_deputado, nome_urna) in enumerate(deputados, 1):
+        if str(id_api_deputado) <= ultimo_deputado_processado and ultimo_deputado_processado != "0":
+            continue
+            
+        logger.info(f"[{i}/{total_deputados}] Buscando órgãos/comissões de: {nome_urna}")
+        sucesso_deputado = True
+        
+        pagina = 1
+        while True:
+            url_lista = f"{BASE_URL}/deputados/{id_api_deputado}/orgaos?ordem=ASC&ordenarPor=dataInicio&pagina={pagina}&itens=100"
+            
+            max_tentativas = 3
+            tentativa_atual = 0
+            sucesso_requisicao = False
+            resp_lista = None
+
+            while tentativa_atual < max_tentativas:
+                resp_lista = http_client.get(url_lista, headers={'accept': 'application/json'})
+                
+                if resp_lista.status_code == 200:
+                    sucesso_requisicao = True
+                    break
+                elif resp_lista.status_code in [429, 500, 502, 503, 504]:
+                    tentativa_atual += 1
+                    tempo_espera = 3 * tentativa_atual
+                    logger.warning(f"Rate Limit na API (HTTP {resp_lista.status_code}). Aguardando {tempo_espera}s... (Tentativa {tentativa_atual}/{max_tentativas})")
+                    time.sleep(tempo_espera)
+                else:
+                    logger.error(f"Erro crítico HTTP {resp_lista.status_code} na URL: {url_lista}")
+                    break
+            
+            if not sucesso_requisicao:
+                sucesso_deputado = False
+                break
+                
+            lista_orgaos = resp_lista.json().get('dados', [])
+            if not lista_orgaos: 
+                break
+                
+            for org_basico in lista_orgaos:
+                id_orgao_api = str(org_basico.get('idOrgao'))
+                cargo_parlamentar = org_basico.get('titulo')
+                
+                # Ignorar cargos nulos ou inválidos
+                if not id_orgao_api or not cargo_parlamentar:
+                    continue
+                
+                # Apenas órgãos ativos no mandato atual (sem data de fim ou data futura)
+                data_fim = org_basico.get('dataFim')
+                if data_fim and data_fim < "2023-01-01":
+                    continue
+
+                try:
+                    # Se o órgão não está no banco, buscamos os detalhes na API e inserimos
+                    if id_orgao_api not in map_orgaos:
+                        detalhes = buscar_detalhes_orgao(id_orgao_api)
+                        
+                        sigla_final = detalhes.get('sigla') if detalhes else org_basico.get('siglaOrgao')
+                        nome_final = detalhes.get('nome') if detalhes else org_basico.get('nomeOrgao')
+                        
+                        cursor.execute(sql_orgao, (id_orgao_api, sigla_final, nome_final))
+                        
+                        cursor.execute(sql_get_orgao_id, (id_orgao_api,))
+                        id_orgao_interno = cursor.fetchone()[0]
+                        map_orgaos[id_orgao_api] = id_orgao_interno # Atualiza o cache em memória
+                        
+                        time.sleep(0.2) # Respiro para a API de detalhes
+                        
+                    # 2. Inserir a relação de membresia (Parlamentar <-> Órgão)
+                    id_orgao_interno = map_orgaos[id_orgao_api]
+                    cursor.execute(sql_membro, (id_parlamentar, id_orgao_interno, cargo_parlamentar))
+                    
+                    conexao.commit()
+                except Exception as e:
+                    conexao.rollback()
+                    logger.error(f"Erro ao salvar órgão {id_orgao_api} para o deputado {id_api_deputado}: {e}")
+                    sucesso_deputado = False
+                
+            pagina += 1
+            time.sleep(0.2)
+            
+        if sucesso_deputado:
+            chk_manager.salvar(nome_script, str(id_api_deputado))
+            time.sleep(0.5)
+
+    chk_manager.salvar(nome_script, "CONCLUIDO_" + datetime.now().strftime('%Y-%m-%d'))
+    logger.info("=== Sincronização de Órgãos e Membros da Câmara FINALIZADA ===")
+    
+    cursor.close()
+    conexao.close()
+
+if __name__ == "__main__":
+    processar_orgaos_camara()
