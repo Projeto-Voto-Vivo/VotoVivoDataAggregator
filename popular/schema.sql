@@ -1,16 +1,13 @@
 CREATE DATABASE IF NOT EXISTS votovivo;
 USE votovivo;
 
-
 CREATE TABLE etlCheckpoint (
     idEtlCheckpoint INT AUTO_INCREMENT PRIMARY KEY,
     nomeScript VARCHAR(100) UNIQUE NOT NULL,
     ultimoParametro VARCHAR(255) NOT NULL,
     dataAtualizacao DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    
     INDEX idx_etl_checkpoint_script (nomeScript)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 
 CREATE TABLE parlamentar (
     idParlamentar INT AUTO_INCREMENT PRIMARY KEY,
@@ -48,7 +45,7 @@ CREATE TABLE proposicao (
         ON DELETE SET NULL
 );
 
-CREATE TABLE IF NOT EXISTS tema (
+CREATE TABLE tema (
     idTema INT AUTO_INCREMENT PRIMARY KEY,
     codigoExterno INT NOT NULL, 
     casa ENUM('Camara', 'Senado') NOT NULL,
@@ -59,7 +56,7 @@ CREATE TABLE IF NOT EXISTS tema (
     UNIQUE KEY unique_tema_casa (codigoExterno, casa, nivel)
 );
 
-CREATE TABLE IF NOT EXISTS temaProposicao (
+CREATE TABLE temaProposicao (
     idProposicao INT NOT NULL,
     idTema INT NOT NULL,
     PRIMARY KEY (idProposicao, idTema),
@@ -67,7 +64,7 @@ CREATE TABLE IF NOT EXISTS temaProposicao (
     FOREIGN KEY (idTema) REFERENCES tema(idTema) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS orgao (
+CREATE TABLE orgao (
     idOrgao INT AUTO_INCREMENT PRIMARY KEY,
     idApi VARCHAR(50) UNIQUE NOT NULL,
     sigla VARCHAR(50),
@@ -85,11 +82,9 @@ CREATE TABLE votacao (
     resumoMateria TEXT NULL,
     resultadoFinal VARCHAR(100) NULL,
     tipoVotacao ENUM('NOMINAL', 'SIMBOLICA', 'SECRETA') NULL,
-
     FOREIGN KEY (idProposicao)
         REFERENCES proposicao(idProposicao)
         ON DELETE SET NULL,
-
     FOREIGN KEY (idOrgao)
         REFERENCES orgao(idOrgao)
         ON DELETE SET NULL
@@ -100,12 +95,10 @@ CREATE TABLE voto (
     idParlamentar INT NOT NULL,
     idVotacao INT NOT NULL,
     idApi VARCHAR(50) UNIQUE NOT NULL,
-    votoRegistrado ENUM('SIM', 'NAO', 'ABSTENCAO', 'AUSENTE', 'SEM REGISTRO', 'AUSENCIA JUSTIFICADA') NOT NULL,
-
+    votoRegistrado ENUM('SIM', 'NAO', 'ABSTENCAO', 'OBSTRUCAO', 'NAO REGISTRADO') NOT NULL,
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
         ON DELETE CASCADE,
-
     FOREIGN KEY (idVotacao)
         REFERENCES votacao(idVotacao)
         ON DELETE CASCADE
@@ -114,13 +107,10 @@ CREATE TABLE voto (
 CREATE TABLE autoriaProposicao (
     idParlamentar INT NOT NULL,
     idProposicao INT NOT NULL,
-
     PRIMARY KEY (idParlamentar, idProposicao),
-
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
         ON DELETE CASCADE,
-
     FOREIGN KEY (idProposicao)
         REFERENCES proposicao(idProposicao)
         ON DELETE CASCADE
@@ -131,7 +121,6 @@ CREATE TABLE redeSocial (
     idParlamentar INT NOT NULL,
     plataforma VARCHAR(50),
     url VARCHAR(500),
-
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
         ON DELETE CASCADE
@@ -146,7 +135,6 @@ CREATE TABLE despesa (
     fornecedorCnpjCpf VARCHAR(20),
     notaFiscalUrl VARCHAR(500),
     categoria VARCHAR(100),
-
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
         ON DELETE CASCADE,
@@ -173,10 +161,8 @@ CREATE TABLE tramitacao (
     descricaoTramitacao VARCHAR(255),
     descricaoSituacao VARCHAR(255),
     despacho TEXT,
-
     CONSTRAINT unique_tramitacao
         UNIQUE (idApi, sequencia),
-
     CONSTRAINT fk_tramitacao_proposicao
         FOREIGN KEY (idProposicao)
         REFERENCES proposicao(idProposicao)
@@ -190,7 +176,6 @@ CREATE TABLE evento (
     idOrgao INT,
     dataHoraInicio DATETIME,
     descricaoTipo VARCHAR(100),
-    
     FOREIGN KEY (idOrgao) REFERENCES orgao(idOrgao) ON DELETE SET NULL
 );
 
@@ -200,13 +185,12 @@ CREATE TABLE presenca (
     idEvento INT NOT NULL,
     statusPresenca ENUM('PRESENTE', 'AUSENTE', 'JUSTIFICADA') NOT NULL,
     justificativa VARCHAR(255),
-    
     FOREIGN KEY (idParlamentar) REFERENCES parlamentar(idParlamentar) ON DELETE CASCADE,
     FOREIGN KEY (idEvento) REFERENCES evento(idEvento) ON DELETE CASCADE,
     UNIQUE KEY unique_presenca_evento (idParlamentar, idEvento)
 );
 
-CREATE TABLE IF NOT EXISTS emenda (
+CREATE TABLE emenda (
     idEmenda INT AUTO_INCREMENT PRIMARY KEY,
     codigoEmenda VARCHAR(100) NOT NULL UNIQUE,
     ano INT,
@@ -223,14 +207,13 @@ CREATE TABLE IF NOT EXISTS emenda (
     valorRestoInscrito DECIMAL(15, 2),
     valorRestoCancelado DECIMAL(15, 2),
     valorRestoPago DECIMAL(15, 2),
-
     INDEX idx_emenda_codigo (codigoEmenda),
     INDEX idx_emenda_ano (ano),
     INDEX idx_emenda_autor (autor),
     INDEX idx_emenda_tipo (tipoEmenda)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS emendaDocumento (
+CREATE TABLE emendaDocumento (
     idEmendaDocumento INT AUTO_INCREMENT PRIMARY KEY,
     idEmenda INT NOT NULL,
     idApi VARCHAR(50),
@@ -241,11 +224,9 @@ CREATE TABLE IF NOT EXISTS emendaDocumento (
     codigoDocumentoResumido VARCHAR(100),
     especieTipo VARCHAR(255),
     tipoEmenda VARCHAR(100),
-
     FOREIGN KEY (idEmenda)
         REFERENCES emenda(idEmenda)
         ON DELETE CASCADE,
-
     UNIQUE KEY unique_emenda_documento (idEmenda, codigoDocumento),
     INDEX idx_emenda_documento_id_emenda (idEmenda),
     INDEX idx_emenda_documento_codigo_emenda (codigoEmenda),
@@ -253,31 +234,25 @@ CREATE TABLE IF NOT EXISTS emendaDocumento (
     INDEX idx_emenda_documento_fase (fase)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
-CREATE TABLE IF NOT EXISTS emendaParlamentar (
+CREATE TABLE emendaParlamentar (
     idEmendaParlamentar INT AUTO_INCREMENT PRIMARY KEY,
     idEmenda INT NOT NULL,
     codigoEmenda VARCHAR(100) NOT NULL,
     idParlamentar INT NOT NULL,
-
     nomeAutorPortal VARCHAR(255),
     nomeAutorNormalizado VARCHAR(255),
-
     metodoVinculo VARCHAR(100),
     confiancaVinculo DECIMAL(5, 2),
-
     FOREIGN KEY (idEmenda)
         REFERENCES emenda(idEmenda)
         ON DELETE CASCADE,
-
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
         ON DELETE CASCADE,
-
     UNIQUE KEY unique_emenda_parlamentar (
         idEmenda,
         idParlamentar
     ),
-
     INDEX idx_emenda_parlamentar_emenda (idEmenda),
     INDEX idx_emenda_parlamentar_codigo (codigoEmenda),
     INDEX idx_emenda_parlamentar_parlamentar (idParlamentar)
