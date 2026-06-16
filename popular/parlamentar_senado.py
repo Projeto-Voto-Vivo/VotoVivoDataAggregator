@@ -1,0 +1,172 @@
+import os
+import time
+import logging
+import xml.etree.ElementTree as ET
+import mysql.connector
+from datetime import datetime
+from dotenv import load_dotenv
+from utils.http_client import http_client 
+from utils.checkpoint_manager import CheckpointManager
+
+# ---------------------------------------------------------
+# 1. CONFIGURAÇÃO DE LOGGING
+# ---------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger("ETL_Senado")
+
+# ---------------------------------------------------------
+# 2. CARREGAR VARIÁVEIS DE AMBIENTE
+# ---------------------------------------------------------
+load_dotenv()
+
+DB_CONFIG = {
+    'host': os.getenv("DB_HOST", "localhost"),
+    'user': os.getenv("DB_USER", "root"),
+    'password': os.getenv("DB_PASSWORD", ""),
+    'database': os.getenv("DB_NAME", "votovivo")
+}
+
+BASE_URL_SENADO = 'https://legis.senado.leg.br/dadosabertos'
+
+# ---------------------------------------------------------
+# 3. FUNÇÕES AUXILIARES DE BANCO E XML
+# ---------------------------------------------------------
+def conectar_db():
+    try:
+        conexao = mysql.connector.connect(**DB_CONFIG)
+        logger.info("Conexão com o banco de dados estabelecida.")
+        return conexao
+    except mysql.connector.Error as err:
+        logger.error(f"Erro crítico de conexão com o banco: {err}")
+        exit(1)
+
+def get_xml_text(element, tag_name, default=None):
+    """Busca recursivamente uma tag no XML e retorna o seu texto, se existir."""
+    if element is None: return default
+    node = element.find(f".//{tag_name}")
+    return node.text if node is not None and node.text else default
+
+# ---------------------------------------------------------
+# 4. LÓGICA DE EXTRAÇÃO E INSERÇÃO
+# ---------------------------------------------------------
+def buscar_senadores_lista():
+    url = f"{BASE_URL_SENADO}/senador/lista/atual?v=4"
+    logger.info("Buscando lista de senadores em exercício...")
+    
+    response = http_client.get(url, headers={'accept': 'application/xml'})
+    if response.status_code != 200:
+        logger.error(f"Erro ao buscar lista do Senado: HTTP {response.status_code}")
+        return []
+
+    try:
+        root = ET.fromstring(response.content)
+        # O XML agrupa em <Parlamentares><Parlamentar>
+        senadores = root.findall('.//Parlamentar')
+        logger.info(f"Lista obtida com sucesso. {len(senadores)} senadores encontrados.")
+        return senadores
+    except ET.ParseError as e:
+        logger.error(f"Erro ao fazer o parse do XML da lista: {e}")
+        return []
+
+def buscar_detalhes_senador(id_api):
+    url = f"{BASE_URL_SENADO}/senador/{id_api}?v=6"
+    response = http_client.get(url, headers={'accept': 'application/xml'})
+    
+    if response.status_code == 200:
+        try:
+            root = ET.fromstring(response.content)
+            return root
+        except ET.ParseError:
+            logger.warning(f"Erro ao fazer parse dos detalhes do senador {id_api}")
+            return None
+    else:
+        logger.warning(f"Falha ao buscar detalhes do senador {id_api} (HTTP {response.status_code})")
+        return None
+
+def processar_senado():
+    conexao = conectar_db()
+    cursor = conexao.cursor()
+    chk_manager = CheckpointManager(conexao)
+    nome_script = "parlamentar_senado_v1"
+    
+    senadores_elementos = buscar_senadores_lista()
+    total = len(senadores_elementos)
+    
+    sql_parlamentar = """
+        INSERT INTO parlamentar 
+        (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+        cargo=VALUES(cargo), nomeCivil=VALUES(nomeCivil), nomeUrna=VALUES(nomeUrna),
+        partidoAtual=VALUES(partidoAtual), uf=VALUES(uf), fotoUrl=VALUES(fotoUrl),
+        dataNascimento=VALUES(dataNascimento), email=VALUES(email),
+        telefone=VALUES(telefone), enderecoGabinete=VALUES(enderecoGabinete)
+    """
+
+    sucesso_total = True
+
+    for i, parlamentar_xml in enumerate(senadores_elementos, 1):
+        # 1. Dados Básicos vindos da Lista Principal
+        id_api = get_xml_text(parlamentar_xml, 'CodigoParlamentar')
+        nome_urna = get_xml_text(parlamentar_xml, 'NomeParlamentar')
+        
+        if not id_api: continue
+        
+        logger.info(f"[{i}/{total}] Processando: {nome_urna} ({id_api})")
+        
+        # 2. Buscar Detalhes para pegar DataNascimento e Gabinete
+        detalhes_xml = buscar_detalhes_senador(id_api)
+        if detalhes_xml is None:
+            time.sleep(1)
+            sucesso_total = False
+            continue
+            
+        # Extrair dados agregados
+        nome_civil = get_xml_text(detalhes_xml, 'NomeCompletoParlamentar') or get_xml_text(parlamentar_xml, 'NomeCompletoParlamentar')
+        partido = get_xml_text(detalhes_xml, 'SiglaPartidoParlamentar') or get_xml_text(parlamentar_xml, 'SiglaPartidoParlamentar')
+        uf = get_xml_text(detalhes_xml, 'UfParlamentar') or get_xml_text(parlamentar_xml, 'UfParlamentar')
+        foto_url = get_xml_text(detalhes_xml, 'UrlFotoParlamentar') or get_xml_text(parlamentar_xml, 'UrlFotoParlamentar')
+        email = get_xml_text(detalhes_xml, 'EmailParlamentar') or get_xml_text(parlamentar_xml, 'EmailParlamentar')
+        
+        telefone = get_xml_text(detalhes_xml, 'NumeroTelefone')
+        data_nasc = get_xml_text(detalhes_xml, 'DataNascimento')
+        endereco_gab = get_xml_text(detalhes_xml, 'EnderecoParlamentar')
+
+        try:
+            valores = (
+                id_api, 'Senador(a)', nome_civil, nome_urna,
+                partido, uf, foto_url, 
+                data_nasc if data_nasc else None, 
+                email, telefone, endereco_gab
+            )
+            cursor.execute(sql_parlamentar, valores)
+            conexao.commit()
+            
+            # Checkpoint a cada 20 senadores
+            if i % 20 == 0:
+                chk_manager.salvar(nome_script, f"PROCESSADO_ATE_INDEX_{i}")
+                
+        except Exception as e:
+            conexao.rollback()
+            logger.error(f"Erro ao salvar dados do senador {id_api} no banco: {e}")
+            sucesso_total = False
+
+        time.sleep(0.1) # Respeitar limites da API do Senado
+
+    if sucesso_total:
+        data_hoje = datetime.now().strftime('%Y-%m-%d')
+        chk_manager.salvar(nome_script, f"CONCLUIDO_{data_hoje}")
+        logger.info("Sincronização do Senado finalizada com SUCESSO!")
+    else:
+        logger.warning("Sincronização finalizada, mas com alguns erros. Verifique os logs.")
+
+    cursor.close()
+    conexao.close()
+
+if __name__ == "__main__":
+    logger.info("=== INICIANDO SCRIPT DE CARGA: SENADO FEDERAL ===")
+    processar_senado()
