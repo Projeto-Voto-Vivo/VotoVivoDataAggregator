@@ -1,62 +1,25 @@
-import mysql.connector
 import time
 import sys
 import os
-import logging
-from dotenv import load_dotenv
 
 from utils.http_client import http_client
+from utils.db import get_connection
+from utils.checkpoint_manager import CheckpointManager
+from utils.logging_config import get_logger
 
-# ==========================================
-# CONFIGURAÇÃO DE LOGS
-# ==========================================
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger("VotoETL")
-
-load_dotenv()
+logger = get_logger("VotoETL")
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 
-try:
-    db = mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
-    )
-    cursor = db.cursor()
-    logger.info("Conexão estabelecida para Votos da Câmara.")
-except mysql.connector.Error as err:
-    logger.error(f"Erro de conexão: {err}")
-    sys.exit(1)
+db, cursor = get_connection()
+logger.info("Conexão estabelecida para Votos da Câmara.")
+
+chk_manager = CheckpointManager(db)
 
 script_camara = "popular/voto.py#camara_logs_ausencia_justificada"
 
-def obter_ultimo_checkpoint(nome_script, default_value="0"):
-    query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
-    cursor.execute(query, (nome_script,))
-    resultado = cursor.fetchone()
-    if resultado:
-        logger.debug(f"Checkpoint recuperado para {nome_script}: {resultado[0]}")
-        return resultado[0]
-    return default_value
-
-def salvar_checkpoint_transacao(nome_script, valor_parametro):
-    query = '''
-        INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
-        VALUES (%s, %s)
-        ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
-    '''
-    cursor.execute(query, (nome_script, str(valor_parametro)))
-
-cursor.execute("SELECT idApi, idParlamentar FROM parlamentar WHERE cargo = 'Deputado Federal'")
+cursor.execute("SELECT idApi, idParlamentar FROM parlamentar WHERE cargo = 'Deputado(a)'")
 map_parlamentares = {str(row[0]): row[1] for row in cursor.fetchall()}
 
 def importar_votos_camara():
@@ -71,7 +34,7 @@ def importar_votos_camara():
         ORDER BY idVotacao ASC
     ''')
     votacoes = cursor.fetchall()
-    checkpoint_atual = int(obter_ultimo_checkpoint(script_camara, default_value="0"))
+    checkpoint_atual = int(chk_manager.obter(script_camara, default_value="0"))
     total_votos = 0
     start_time = time.time()
 
@@ -95,7 +58,7 @@ def importar_votos_camara():
                 db.start_transaction()
 
                 if not dados: 
-                    salvar_checkpoint_transacao(script_camara, id_votacao)
+                    chk_manager.salvar(script_camara, id_votacao)
                     db.commit()
                     continue
 
@@ -130,7 +93,7 @@ def importar_votos_camara():
                     ''', batch)
                     total_votos += len(batch)
 
-                salvar_checkpoint_transacao(script_camara, id_votacao)
+                chk_manager.salvar(script_camara, id_votacao)
                 db.commit()
                 time.sleep(0.1)
             except Exception as e:

@@ -1,49 +1,18 @@
-import os
 import time
-import logging
-import mysql.connector
 from urllib.parse import urlparse
 from datetime import datetime
-from dotenv import load_dotenv
 from utils.http_client import http_client
+from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.logging_config import get_logger
 
-# ---------------------------------------------------------
-# 1. CONFIGURAÇÃO DE LOGGING
-# ---------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("ETL_Camara")
-
-# ---------------------------------------------------------
-# 2. CARREGAR VARIÁVEIS DE AMBIENTE
-# ---------------------------------------------------------
-load_dotenv()
-
-DB_CONFIG = {
-    'host': os.getenv("DB_HOST", "localhost"),
-    'user': os.getenv("DB_USER", "root"),
-    'password': os.getenv("DB_PASSWORD", ""),
-    'database': os.getenv("DB_NAME", "votovivo")
-}
+logger = get_logger("ETL_Camara")
 
 BASE_URL = 'https://dadosabertos.camara.leg.br/api/v2'
 
 # ---------------------------------------------------------
 # 3. FUNÇÕES AUXILIARES
 # ---------------------------------------------------------
-def conectar_db():
-    try:
-        conexao = mysql.connector.connect(**DB_CONFIG)
-        logger.info("Conexão com o banco de dados estabelecida com sucesso.")
-        return conexao
-    except mysql.connector.Error as err:
-        logger.error(f"Erro crítico de conexão com o banco: {err}")
-        exit(1)
-
 def identificar_plataforma(url):
     dominio = urlparse(url).netloc.lower()
     if 'twitter' in dominio or 'x.com' in dominio: return 'Twitter'
@@ -53,6 +22,16 @@ def identificar_plataforma(url):
     if 'tiktok' in dominio: return 'TikTok'
     if 'linkedin' in dominio: return 'LinkedIn'
     return 'Website'
+
+def condicao_mandato_camara(ultimo_status):
+    situacao = ultimo_status.get('situacao', '')
+    cond_eleitoral = ultimo_status.get('condicaoEleitoral', '')
+
+    if situacao in ('Afastado', 'Fim de Mandato'):
+        return "Afastado"
+    if 'Suplente' in cond_eleitoral:
+        return "Suplente"
+    return "Titular"
 
 def processar_gabinete(gabinete_dados):
     if not gabinete_dados:
@@ -80,7 +59,7 @@ def buscar_deputados():
         url = f"{BASE_URL}/deputados?pagina={pagina}&itens=100&ordem=ASC&ordenarPor=nome"
         
         # Utilizando o http_client mantido
-        response = http_client.get(url, headers={'accept': 'application/json'})
+        response = http_client.get_safe(url, headers={'accept': 'application/json'})
         
         if response.status_code != 200:
             logger.error(f"Erro na API da Câmara ao buscar página {pagina}: HTTP {response.status_code}")
@@ -99,7 +78,7 @@ def buscar_deputados():
 
 def buscar_detalhes_deputado(id_api):
     url = f"{BASE_URL}/deputados/{id_api}"
-    response = http_client.get(url, headers={'accept': 'application/json'})
+    response = http_client.get_safe(url, headers={'accept': 'application/json'})
     
     if response.status_code == 200:
         return response.json().get('dados', {})
@@ -108,8 +87,7 @@ def buscar_detalhes_deputado(id_api):
         return None
 
 def processar_camara():
-    conexao = conectar_db()
-    cursor = conexao.cursor()
+    conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "parlamentar_camara_v1"
     
@@ -118,16 +96,17 @@ def processar_camara():
     total = len(deputados_basico)
     
     sql_parlamentar = """
-        INSERT INTO parlamentar 
-        (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO parlamentar
+        (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete, condicao_mandato)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
         cargo=VALUES(cargo), nomeCivil=VALUES(nomeCivil), nomeUrna=VALUES(nomeUrna),
         partidoAtual=VALUES(partidoAtual), uf=VALUES(uf), fotoUrl=VALUES(fotoUrl),
         dataNascimento=VALUES(dataNascimento), email=VALUES(email),
-        telefone=VALUES(telefone), enderecoGabinete=VALUES(enderecoGabinete)
+        telefone=VALUES(telefone), enderecoGabinete=VALUES(enderecoGabinete),
+        condicao_mandato=VALUES(condicao_mandato)
     """
-    
+
     sql_get_id = "SELECT idParlamentar FROM parlamentar WHERE idApi = %s"
     sql_delete_redes = "DELETE FROM redeSocial WHERE idParlamentar = %s"
     sql_insert_rede = "INSERT INTO redeSocial (idParlamentar, plataforma, url) VALUES (%s, %s, %s)"
@@ -147,16 +126,18 @@ def processar_camara():
         ultimo_status = detalhes.get('ultimoStatus', {})
         gabinete = ultimo_status.get('gabinete', {})
         endereco_gab, telefone_gab = processar_gabinete(gabinete)
-        
+        condicao_mandato = condicao_mandato_camara(ultimo_status)
+
         email = gabinete.get('email') or dep.get('email')
         data_nasc = detalhes.get('dataNascimento')
-        
+
         try:
             # 1. Inserir Parlamentar
             valores = (
                 id_api, 'Deputado(a)', detalhes.get('nomeCivil'), dep.get('nome'),
                 dep.get('siglaPartido'), dep.get('siglaUf'), dep.get('urlFoto'),
-                data_nasc if data_nasc else None, email, telefone_gab, endereco_gab
+                data_nasc if data_nasc else None, email, telefone_gab, endereco_gab,
+                condicao_mandato
             )
             cursor.execute(sql_parlamentar, valores)
             

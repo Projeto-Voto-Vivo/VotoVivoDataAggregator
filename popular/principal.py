@@ -2,26 +2,29 @@ import os
 import subprocess
 import sys
 import time
-import mysql.connector
-from dotenv import load_dotenv
 
-load_dotenv()
+from utils.db import get_connection
+from utils.checkpoint_manager import CheckpointManager
 
 PIPELINE_SCRIPTS = [
-    "parlamentar.py",
+    "camara/parlamentar_camara.py",
+    "senado/parlamentar_senado.py",
     "tipoProposicao.py",
-    "tema.py",
-    "orgao.py",
-    "tipoTramitacao.py",
-    "proposicao.py",
-    "redeSocial.py",
-    "despesas.py",
+    "camara/tema_camara.py",
+    "senado/tema_senado.py",
+    "camara/orgao_camara.py",
+    "senado/orgao_senado.py",
+    "camara/proposicao_camara.py",
+    "senado/proposicao_senado.py",
+    "camara/despesas_camara.py",
+    "senado/despesas_senado.py",
     "emenda.py",
-    "vincular_tema.py",
-    "autoriaProposicao.py",
-    "tramitacao.py",
-    "presenca.py",
-    "votacao.py",
+    "tipoTramitacao.py",
+    "camara/tramitacao_camara.py",
+    "senado/tramitacao_senado.py",
+    "camara/evento_camara.py",
+    "senado/votacao_presenca_senado.py",
+    "camara/votacao_camara.py",
     "voto.py",
     "relacionarEmendaParlamentar.py",
 ]
@@ -29,33 +32,20 @@ PIPELINE_SCRIPTS = [
 IDENTIFICADOR_ORQUESTRADOR = "popular/principal.py#pipeline"
 
 try:
-    db = mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
-    )
-    cursor = db.cursor()
-except mysql.connector.Error as err:
+    db, cursor = get_connection()
+except Exception as err:
     print(f"[!] Erro ao conectar ao banco no orquestrador: {err}")
     sys.exit(1)
 
+chk_manager = CheckpointManager(db)
+
 
 def obter_ultimo_script_concluido():
-    query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
-    cursor.execute(query, (IDENTIFICADOR_ORQUESTRADOR,))
-    resultado = cursor.fetchone()
-    return resultado[0] if resultado else None
+    return chk_manager.obter(IDENTIFICADOR_ORQUESTRADOR, default_value=None)
 
 
 def salvar_checkpoint_pipeline(script_name):
-    query = """
-        INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
-        VALUES (%s, %s)
-        ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
-    """
-    cursor.execute(query, (IDENTIFICADOR_ORQUESTRADOR, script_name))
-    db.commit()
+    chk_manager.salvar(IDENTIFICADOR_ORQUESTRADOR, script_name)
 
 
 def executar_script(script_name):

@@ -24,23 +24,26 @@ SCHEMA_PATH    = SCRIPTS_DIR / "schema.sql"
 TEMPO_PADRAO   = 60  # segundos por script
 
 SCRIPTS_ORDEM = [
-    "parlamentar.py",
-    "redeSocial.py",
-    "gabinete.py",
+    "camara/parlamentar_camara.py",
+    "senado/parlamentar_senado.py",
     "tipoProposicao.py",
-    "proposicao.py",
-    "autoriaProposicao.py",
-    "tema.py",
-    "vincular_tema.py",
-    "votacao.py",
-    "voto.py",
-    "despesas.py",
-    "tipoTramitacao.py",
-    "orgao.py",
-    "tramitacao.py",
+    "camara/tema_camara.py",
+    "senado/tema_senado.py",
+    "camara/orgao_camara.py",
+    "senado/orgao_senado.py",
+    "camara/proposicao_camara.py",
+    "senado/proposicao_senado.py",
+    "camara/despesas_camara.py",
+    "senado/despesas_senado.py",
     "emenda.py",
+    "tipoTramitacao.py",
+    "camara/tramitacao_camara.py",
+    "senado/tramitacao_senado.py",
+    "camara/evento_camara.py",
+    "senado/votacao_presenca_senado.py",
+    "camara/votacao_camara.py",
+    "voto.py",
     "relacionarEmendaParlamentar.py",
-    "presenca.py",
 ]
 
 
@@ -50,7 +53,7 @@ def criar_schema(force=False):
     DB_HOST     = os.getenv("DB_HOST", "localhost")
     DB_USER     = os.getenv("DB_USER", "root")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-    DB_NAME     = os.getenv("DB_NAME", "votoVivo")
+    DB_NAME     = os.getenv("DB_NAME", "votovivo")
 
     try:
         conn   = mysql.connector.connect(host=DB_HOST, user=DB_USER, password=DB_PASSWORD)

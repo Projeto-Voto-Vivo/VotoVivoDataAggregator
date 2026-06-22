@@ -1,22 +1,11 @@
 import os
-import sys
-import mysql.connector
 from utils.http_client import http_client
-
-from dotenv import load_dotenv
-
-load_dotenv()
+from utils.db import get_connection
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 
-db = mysql.connector.connect(
-    host=os.getenv("DB_HOST", "localhost"),
-    user=os.getenv("DB_USER", "root"),
-    password=os.getenv("DB_PASSWORD", ""),
-    database=os.getenv("DB_NAME", "votoVivo")
-)
-cursor = db.cursor(buffered=True)
+db, cursor = get_connection(buffered=True)
 
 
 TIPOS_FIXOS = [

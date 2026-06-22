@@ -3,11 +3,7 @@ import re
 import time
 import unicodedata
 
-import mysql.connector
-from dotenv import load_dotenv
-
-
-load_dotenv()
+from utils.db import get_connection
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
@@ -20,15 +16,7 @@ MESES = [
 
 ANO = os.getenv("EMENDAS_ANO")
 
-
-db = mysql.connector.connect(
-    host=os.getenv("DB_HOST", "localhost"),
-    user=os.getenv("DB_USER", "root"),
-    password=os.getenv("DB_PASSWORD", ""),
-    database=os.getenv("DB_NAME", "votoVivo")
-)
-
-cursor = db.cursor(dictionary=True)
+db, cursor = get_connection(dictionary=True)
 
 
 def normalizar_nome(nome):

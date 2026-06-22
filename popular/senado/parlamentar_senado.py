@@ -1,49 +1,18 @@
-import os
 import time
-import logging
 import xml.etree.ElementTree as ET
-import mysql.connector
 from datetime import datetime
-from dotenv import load_dotenv
-from utils.http_client import http_client 
+from utils.http_client import http_client
+from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.logging_config import get_logger
 
-# ---------------------------------------------------------
-# 1. CONFIGURAÇÃO DE LOGGING
-# ---------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("ETL_Senado")
-
-# ---------------------------------------------------------
-# 2. CARREGAR VARIÁVEIS DE AMBIENTE
-# ---------------------------------------------------------
-load_dotenv()
-
-DB_CONFIG = {
-    'host': os.getenv("DB_HOST", "localhost"),
-    'user': os.getenv("DB_USER", "root"),
-    'password': os.getenv("DB_PASSWORD", ""),
-    'database': os.getenv("DB_NAME", "votovivo")
-}
+logger = get_logger("ETL_Senado")
 
 BASE_URL_SENADO = 'https://legis.senado.leg.br/dadosabertos'
 
 # ---------------------------------------------------------
 # 3. FUNÇÕES AUXILIARES DE BANCO E XML
 # ---------------------------------------------------------
-def conectar_db():
-    try:
-        conexao = mysql.connector.connect(**DB_CONFIG)
-        logger.info("Conexão com o banco de dados estabelecida.")
-        return conexao
-    except mysql.connector.Error as err:
-        logger.error(f"Erro crítico de conexão com o banco: {err}")
-        exit(1)
-
 def get_xml_text(element, tag_name, default=None):
     """Busca recursivamente uma tag no XML e retorna o seu texto, se existir."""
     if element is None: return default
@@ -57,7 +26,7 @@ def buscar_senadores_lista():
     url = f"{BASE_URL_SENADO}/senador/lista/atual?v=4"
     logger.info("Buscando lista de senadores em exercício...")
     
-    response = http_client.get(url, headers={'accept': 'application/xml'})
+    response = http_client.get_safe(url, headers={'accept': 'application/xml'})
     if response.status_code != 200:
         logger.error(f"Erro ao buscar lista do Senado: HTTP {response.status_code}")
         return []
@@ -72,9 +41,34 @@ def buscar_senadores_lista():
         logger.error(f"Erro ao fazer o parse do XML da lista: {e}")
         return []
 
+def buscar_afastados_senado():
+    url = f"{BASE_URL_SENADO}/senador/lista/afastados"
+    response = http_client.get_safe(url, headers={'accept': 'application/xml'})
+    if response.status_code != 200:
+        logger.warning(f"Falha ao buscar lista de afastados do Senado (HTTP {response.status_code})")
+        return set()
+
+    try:
+        root = ET.fromstring(response.content)
+        return {
+            get_xml_text(p, 'CodigoParlamentar')
+            for p in root.findall('.//Parlamentar')
+            if get_xml_text(p, 'CodigoParlamentar')
+        }
+    except ET.ParseError as e:
+        logger.error(f"Erro ao fazer o parse do XML de afastados: {e}")
+        return set()
+
+def condicao_mandato_senado(id_api, parlamentar_xml, afastados_senado):
+    if id_api in afastados_senado:
+        return "Afastado"
+    if 'Suplente' in (get_xml_text(parlamentar_xml, 'DescricaoParticipacao') or ''):
+        return "Suplente"
+    return "Titular"
+
 def buscar_detalhes_senador(id_api):
     url = f"{BASE_URL_SENADO}/senador/{id_api}?v=6"
-    response = http_client.get(url, headers={'accept': 'application/xml'})
+    response = http_client.get_safe(url, headers={'accept': 'application/xml'})
     
     if response.status_code == 200:
         try:
@@ -88,23 +82,24 @@ def buscar_detalhes_senador(id_api):
         return None
 
 def processar_senado():
-    conexao = conectar_db()
-    cursor = conexao.cursor()
+    conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "parlamentar_senado_v1"
     
     senadores_elementos = buscar_senadores_lista()
     total = len(senadores_elementos)
-    
+    afastados_senado = buscar_afastados_senado()
+
     sql_parlamentar = """
-        INSERT INTO parlamentar 
-        (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO parlamentar
+        (idApi, cargo, nomeCivil, nomeUrna, partidoAtual, uf, fotoUrl, dataNascimento, email, telefone, enderecoGabinete, condicao_mandato)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
         cargo=VALUES(cargo), nomeCivil=VALUES(nomeCivil), nomeUrna=VALUES(nomeUrna),
         partidoAtual=VALUES(partidoAtual), uf=VALUES(uf), fotoUrl=VALUES(fotoUrl),
         dataNascimento=VALUES(dataNascimento), email=VALUES(email),
-        telefone=VALUES(telefone), enderecoGabinete=VALUES(enderecoGabinete)
+        telefone=VALUES(telefone), enderecoGabinete=VALUES(enderecoGabinete),
+        condicao_mandato=VALUES(condicao_mandato)
     """
 
     sucesso_total = True
@@ -135,13 +130,14 @@ def processar_senado():
         telefone = get_xml_text(detalhes_xml, 'NumeroTelefone')
         data_nasc = get_xml_text(detalhes_xml, 'DataNascimento')
         endereco_gab = get_xml_text(detalhes_xml, 'EnderecoParlamentar')
+        condicao_mandato = condicao_mandato_senado(id_api, parlamentar_xml, afastados_senado)
 
         try:
             valores = (
                 id_api, 'Senador(a)', nome_civil, nome_urna,
-                partido, uf, foto_url, 
-                data_nasc if data_nasc else None, 
-                email, telefone, endereco_gab
+                partido, uf, foto_url,
+                data_nasc if data_nasc else None,
+                email, telefone, endereco_gab, condicao_mandato
             )
             cursor.execute(sql_parlamentar, valores)
             conexao.commit()

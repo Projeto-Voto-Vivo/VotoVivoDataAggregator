@@ -1,46 +1,18 @@
-import os
 import time
-import logging
-import mysql.connector
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from dotenv import load_dotenv
-from utils.http_client import http_client 
+from utils.http_client import http_client
+from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.logging_config import get_logger
 
-# ---------------------------------------------------------
-# 1. CONFIGURAÇÃO DE LOGGING
-# ---------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("ETL_Orgao_Senado")
-
-load_dotenv()
-
-DB_CONFIG = {
-    'host': os.getenv("DB_HOST", "localhost"),
-    'user': os.getenv("DB_USER", "root"),
-    'password': os.getenv("DB_PASSWORD", ""),
-    'database': os.getenv("DB_NAME", "votovivo")
-}
+logger = get_logger("ETL_Orgao_Senado")
 
 BASE_URL_SENADO = 'https://legis.senado.leg.br/dadosabertos'
 
 # ---------------------------------------------------------
 # 2. FUNÇÕES DE BANCO E AUXILIARES
 # ---------------------------------------------------------
-def conectar_db():
-    try:
-        conexao = mysql.connector.connect(**DB_CONFIG)
-        logger.info("Conexão com o banco de dados estabelecida com sucesso.")
-        return conexao
-    except mysql.connector.Error as err:
-        logger.error(f"Erro crítico de conexão com o banco: {err}")
-        exit(1)
-
 def obter_senadores_ativos(cursor):
     cursor.execute("SELECT idParlamentar, idApi, nomeUrna FROM parlamentar WHERE cargo = 'Senador(a)'")
     return cursor.fetchall()
@@ -67,8 +39,7 @@ def mapear_casa(sigla_casa_xml):
 # 3. LÓGICA DE EXTRAÇÃO E INSERÇÃO
 # ---------------------------------------------------------
 def processar_orgaos_senado():
-    conexao = conectar_db()
-    cursor = conexao.cursor()
+    conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "orgao_senado_v1"
     
@@ -96,31 +67,13 @@ def processar_orgaos_senado():
         
         # Diferente da Câmara, o Senado retorna tudo numa chamada só (não precisa paginar)
         url_lista = f"{BASE_URL_SENADO}/senador/{id_api_senador}/comissoes?v=5"
-        
-        max_tentativas = 3
-        tentativa_atual = 0
-        sucesso_requisicao = False
-        resp_lista = None
 
-        while tentativa_atual < max_tentativas:
-            resp_lista = http_client.get(url_lista, headers={'accept': 'application/xml'})
-            
-            if resp_lista.status_code == 200:
-                sucesso_requisicao = True
-                break
-            elif resp_lista.status_code in [429, 500, 502, 503, 504]:
-                tentativa_atual += 1
-                tempo_espera = 3 * tentativa_atual
-                logger.warning(f"Rate Limit na API (HTTP {resp_lista.status_code}). Aguardando {tempo_espera}s... (Tentativa {tentativa_atual}/{max_tentativas})")
-                time.sleep(tempo_espera)
-            else:
-                logger.error(f"Erro crítico HTTP {resp_lista.status_code} na URL: {url_lista}")
-                break
-        
-        if not sucesso_requisicao:
+        resp_lista = http_client.get_safe(url_lista, headers={'accept': 'application/xml'})
+        if resp_lista.status_code != 200:
+            logger.error(f"Erro crítico HTTP {resp_lista.status_code} na URL: {url_lista}")
             sucesso_senador = False
             continue
-            
+
         try:
             root = ET.fromstring(resp_lista.content)
             comissoes = root.findall('.//Comissao')

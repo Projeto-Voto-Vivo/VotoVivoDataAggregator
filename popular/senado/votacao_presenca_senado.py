@@ -1,56 +1,21 @@
-import os
 import time
-import logging
-import mysql.connector
 from datetime import datetime
-from dotenv import load_dotenv
-from utils.http_client import http_client 
+from utils.http_client import http_client
+from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.logging_config import get_logger
+from utils.orgao_cache import OrgaoCache
 
-# ---------------------------------------------------------
-# 1. CONFIGURAÇÃO DE LOGGING
-# ---------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO, 
-    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s', 
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("ETL_Votacao_Senado")
-load_dotenv()
-
-DB_CONFIG = {
-    'host': os.getenv("DB_HOST", "localhost"),
-    'user': os.getenv("DB_USER", "root"),
-    'password': os.getenv("DB_PASSWORD", ""),
-    'database': os.getenv("DB_NAME", "votovivo")
-}
+logger = get_logger("ETL_Votacao_Senado")
 
 BASE_URL = 'https://legis.senado.leg.br/dadosabertos'
 
 # ---------------------------------------------------------
 # 2. FUNÇÕES AUXILIARES
 # ---------------------------------------------------------
-def conectar_db():
-    try:
-        conexao = mysql.connector.connect(**DB_CONFIG)
-        logger.info("Conexão com a base de dados estabelecida com sucesso.")
-        return conexao
-    except mysql.connector.Error as err:
-        logger.error(f"Erro crítico de conexão com a base de dados: {err}")
-        exit(1)
-
-def fazer_requisicao_com_retry(url, max_tentativas=3):
-    tentativa = 0
-    while tentativa < max_tentativas:
-        resp = http_client.get(url, headers={'accept': 'application/json'})
-        if resp.status_code == 200: return resp
-        elif resp.status_code == 404: return None 
-        elif resp.status_code in [429, 500, 502, 503, 504]:
-            tentativa += 1
-            tempo_espera = 3 * tentativa
-            logger.warning(f"Aguardando {tempo_espera}s (HTTP {resp.status_code}) para URL: {url}...")
-            time.sleep(tempo_espera)
-        else: return None
+def fazer_requisicao_com_retry(url):
+    resp = http_client.get_safe(url, headers={'accept': 'application/json'})
+    if resp.status_code == 200: return resp
     return None
 
 def mapear_voto_senado(voto_string):
@@ -65,14 +30,20 @@ def mapear_voto_senado(voto_string):
     if "ART. 17" in voto or "PRESIDENTE" in voto: return "NAO REGISTRADO"
     return "NAO REGISTRADO"
 
+def mapear_resultado_senado(resultado_raw):
+    resultado_raw = str(resultado_raw or "")
+    if resultado_raw == "A": return "Aprovado"
+    if resultado_raw == "R": return "Rejeitado"
+    return resultado_raw or None
+
 # ---------------------------------------------------------
 # 3. LÓGICA DE EXTRAÇÃO E INSERÇÃO
 # ---------------------------------------------------------
 def processar_votacoes_presencas_senado():
-    conexao = conectar_db()
-    cursor = conexao.cursor(dictionary=True)
+    conexao, cursor = get_connection(dictionary=True)
     chk_manager = CheckpointManager(conexao)
-    
+    orgaos = OrgaoCache(conexao, cursor, "Senado", logger=logger)
+
     nome_script = "votacao_presenca_senado"
     
     logger.info("A carregar Senadores em atividade para a memória...")
@@ -124,37 +95,51 @@ def processar_votacoes_presencas_senado():
             data_votacao = votacao.get('dataSessao')
             data_hora_formatada = data_votacao + " 00:00:00" if data_votacao else None
             resumo = votacao.get('descricaoVotacao')
-            
+
+            votos_api = votacao.get('votos', [])
+            if isinstance(votos_api, dict):
+                votos_api = votos_api.get('votoParlamentar') or votos_api.get('voto') or []
+            if not isinstance(votos_api, list):
+                votos_api = [votos_api]
+
+            resultado = mapear_resultado_senado(votacao.get('resultadoVotacao'))
+
+            secreta_flag = str(votacao.get('votacaoSecreta', 'N')).upper()
+            tipo = "SECRETA" if secreta_flag == "S" else ("NOMINAL" if votos_api else "SIMBOLICA")
+
+            id_orgao_votacao = id_plenario_senado
+            informe = votacao.get('informeLegislativo') or {}
+            cod_colegiado = informe.get('codigoColegiado')
+            if cod_colegiado:
+                id_orgao_votacao = orgaos.garantir(cod_colegiado, informe.get('siglaColegiado')) or id_plenario_senado
+
             logger.info(f"   └─ Encontrada Sessão {id_sessao} ({data_votacao}). A processar dados de plenário e votos...")
-            
+
             try:
                 # 1. Evento
                 id_evento_api = f"SESSAO_{id_sessao}"
                 cursor.execute("""
-                    INSERT IGNORE INTO evento (idApi, casa, idOrgao, dataHoraInicio, descricaoTipo) 
+                    INSERT IGNORE INTO evento (idApi, casa, idOrgao, dataHoraInicio, descricaoTipo)
                     VALUES (%s, 'Senado', %s, %s, 'Sessão Deliberativa')
-                """, (id_evento_api, id_plenario_senado, data_hora_formatada))
-                
+                """, (id_evento_api, id_orgao_votacao, data_hora_formatada))
+
                 cursor.execute("SELECT idEvento FROM evento WHERE idApi = %s", (id_evento_api,))
                 id_evento_interno = cursor.fetchone()['idEvento']
 
                 # 2. Votação
                 cursor.execute("""
-                    INSERT INTO votacao (idApi, casa, idProposicao, idEvento, idOrgao, dataHora, resumoMateria)
-                    VALUES (%s, 'Senado', %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE resumoMateria=VALUES(resumoMateria)
-                """, (id_sessao, id_proposicao_interno, id_evento_interno, id_plenario_senado, data_hora_formatada, resumo))
-                
+                    INSERT INTO votacao (idApi, casa, idProposicao, idEvento, idOrgao, dataHora, resumoMateria, resultadoFinal, tipoVotacao)
+                    VALUES (%s, 'Senado', %s, %s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE
+                        resumoMateria=VALUES(resumoMateria),
+                        resultadoFinal=VALUES(resultadoFinal),
+                        tipoVotacao=VALUES(tipoVotacao)
+                """, (id_sessao, id_proposicao_interno, id_evento_interno, id_orgao_votacao, data_hora_formatada, resumo, resultado, tipo))
+
                 cursor.execute("SELECT idVotacao FROM votacao WHERE idApi = %s AND casa = 'Senado'", (id_sessao,))
                 id_votacao_interno = cursor.fetchone()['idVotacao']
 
                 # 3. Votos
-                votos_api = votacao.get('votos', [])
-                if isinstance(votos_api, dict):
-                    votos_api = votos_api.get('votoParlamentar') or votos_api.get('voto') or []
-                if not isinstance(votos_api, list):
-                    votos_api = [votos_api]
-                
                 senadores_votaram = set()
                 contagem_votos = {'SIM': 0, 'NAO': 0, 'ABSTENCAO': 0, 'OBSTRUCAO': 0, 'NAO REGISTRADO': 0}
 

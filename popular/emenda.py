@@ -2,12 +2,10 @@ import os
 import time
 from decimal import Decimal, InvalidOperation
 from datetime import datetime
-from dotenv import load_dotenv
-import mysql.connector
 
 from utils.http_client import http_client
-
-load_dotenv()
+from utils.db import get_connection
+from utils.checkpoint_manager import CheckpointManager
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
@@ -19,34 +17,12 @@ if not API_KEY:
     print("Erro: defina PORTAL_TRANSPARENCIA_API_KEY no .env")
     exit(1)
 
-try:
-    db = mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "votoVivo")
-    )
-    cursor = db.cursor()
-    print("Conexão estabelecida para Emendas Parlamentares.")
-except mysql.connector.Error as err:
-    print(f"Erro de conexão: {err}")
-    exit(1)
+db, cursor = get_connection()
+print("Conexão estabelecida para Emendas Parlamentares.")
+
+chk_manager = CheckpointManager(db)
 
 script_checkpoint = "popular/emenda.py#dinamico_v2"
-
-def obter_ultimo_checkpoint(nome_script, default_value="2025_1"):
-    query = "SELECT ultimoParametro FROM etlCheckpoint WHERE nomeScript = %s"
-    cursor.execute(query, (nome_script,))
-    resultado = cursor.fetchone()
-    return resultado[0] if resultado else default_value
-
-def salvar_checkpoint_transacao(nome_script, valor_parametro):
-    query = '''
-        INSERT INTO etlCheckpoint (nomeScript, ultimoParametro) 
-        VALUES (%s, %s)
-        ON DUPLICATE KEY UPDATE ultimoParametro = VALUES(ultimoParametro)
-    '''
-    cursor.execute(query, (nome_script, str(valor_parametro)))
 
 def converter_valor(valor):
     if valor is None or valor == "":
@@ -90,7 +66,7 @@ print("=" * 50)
 print(f"Buscando emendas parlamentares ({MES_INICIO}/{ANO_INICIO} a {MES_ATUAL}/{ANO_ATUAL})...")
 print("=" * 50)
 
-checkpoint_atual = obter_ultimo_checkpoint(script_checkpoint, default_value=f"{ANO_INICIO}_1")
+checkpoint_atual = chk_manager.obter(script_checkpoint, default_value=f"{ANO_INICIO}_1")
 ano_atual_chk, pagina = map(int, checkpoint_atual.split("_"))
 
 contador_emendas = 0
@@ -248,7 +224,7 @@ try:
             if db.in_transaction:
                 db.commit()
             db.start_transaction()
-            salvar_checkpoint_transacao(script_checkpoint, f"{ano}_{pagina}")
+            chk_manager.salvar(script_checkpoint, f"{ano}_{pagina}")
             db.commit()
             
             pagina += 1

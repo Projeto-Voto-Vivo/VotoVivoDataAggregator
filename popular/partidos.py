@@ -1,22 +1,12 @@
 from utils.http_client import http_client
-import mysql.connector
+from utils.db import get_connection
 import time
-import os  
-from dotenv import load_dotenv 
-
-load_dotenv()
+import os
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 
-db = mysql.connector.connect(
-    host=os.getenv("DB_HOST", "localhost"),
-    user=os.getenv("DB_USER", "root"),
-    password=os.getenv("DB_PASSWORD", ""),
-    database=os.getenv("DB_NAME", "votovivo")
-)
-
-cursor = db.cursor()
+db, cursor = get_connection()
 
 print("=" * 80)
 print(" IMPORTAÇÃO DE PARTIDOS")

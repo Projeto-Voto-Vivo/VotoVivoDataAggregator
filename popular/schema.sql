@@ -21,7 +21,8 @@ CREATE TABLE parlamentar (
     dataNascimento DATE,
     email VARCHAR(255),
     telefone VARCHAR(20),
-    enderecoGabinete VARCHAR(500)
+    enderecoGabinete VARCHAR(500),
+    condicao_mandato VARCHAR(50) DEFAULT 'Titular'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE tipoProposicao (

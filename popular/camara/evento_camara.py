@@ -1,29 +1,14 @@
 import os
 import time
-import logging
 import mysql.connector
 from datetime import datetime
 from bs4 import BeautifulSoup
-from dotenv import load_dotenv
-from utils.http_client import http_client 
+from utils.http_client import http_client
+from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.logging_config import get_logger
 
-# ---------------------------------------------------------
-# 1. CONFIGURAÇÃO DE LOGGING
-# ---------------------------------------------------------
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-logger = logging.getLogger("ETL_Evento_Presenca_Camara")
-load_dotenv()
-
-DB_CONFIG = {
-    'host': os.getenv("DB_HOST", "localhost"),
-    'user': os.getenv("DB_USER", "root"),
-    'password': os.getenv("DB_PASSWORD", ""),
-    'database': os.getenv("DB_NAME", "votovivo")
-}
-
-def conectar_db():
-    return mysql.connector.connect(**DB_CONFIG)
+logger = get_logger("ETL_Evento_Presenca_Camara")
 
 def mapear_status(status_texto):
     texto = status_texto.lower().strip()
@@ -45,8 +30,7 @@ def limpar_string_para_id(texto):
 # 2. LÓGICA DE EXTRAÇÃO UNIFICADA (SCRAPING)
 # ---------------------------------------------------------
 def processar_eventos_presencas_camara():
-    conexao = conectar_db()
-    cursor = conexao.cursor(dictionary=True)
+    conexao, cursor = get_connection(dictionary=True)
     chk_manager = CheckpointManager(conexao)
     
     nome_script = "evento_presenca_camara"
@@ -96,7 +80,7 @@ def processar_eventos_presencas_camara():
         logger.info(f"[{i}/{total_deps}] A processar: {nome_urna}...")
         
         for ano in anos_mandato:
-            resp_plen = http_client.get(f"https://www.camara.leg.br/deputados/{id_api}/presenca-plenario/{ano}")
+            resp_plen = http_client.get_safe(f"https://www.camara.leg.br/deputados/{id_api}/presenca-plenario/{ano}")
             if resp_plen.status_code == 200:
                 soup = BeautifulSoup(resp_plen.text, 'html.parser')
                 linhas_sessao = soup.find_all('tr', class_='info-data__child')
@@ -132,7 +116,7 @@ def processar_eventos_presencas_camara():
                             
             time.sleep(0.3)
 
-            resp_com = http_client.get(f"https://www.camara.leg.br/deputados/{id_api}/presenca-comissoes/{ano}")
+            resp_com = http_client.get_safe(f"https://www.camara.leg.br/deputados/{id_api}/presenca-comissoes/{ano}")
             if resp_com.status_code == 200:
                 soup = BeautifulSoup(resp_com.text, 'html.parser')
                 linhas = soup.find_all('tr')

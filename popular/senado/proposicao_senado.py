@@ -1,49 +1,22 @@
 import os
 import time
-import logging
-import mysql.connector
 from datetime import datetime
-from dotenv import load_dotenv
-from utils.http_client import http_client 
+from utils.http_client import http_client
+from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.logging_config import get_logger
 
-# ---------------------------------------------------------
-# 1. CONFIGURAÇÃO DE LOGGING
-# ---------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(name)s] - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-logger = logging.getLogger("ETL_Proposicao_Senado")
-
-load_dotenv()
-
-DB_CONFIG = {
-    'host': os.getenv("DB_HOST", "localhost"),
-    'user': os.getenv("DB_USER", "root"),
-    'password': os.getenv("DB_PASSWORD", ""),
-    'database': os.getenv("DB_NAME", "votovivo")
-}
+logger = get_logger("ETL_Proposicao_Senado")
 
 BASE_URL_SENADO = 'https://legis.senado.leg.br/dadosabertos'
 
 # ---------------------------------------------------------
 # 2. FUNÇÕES DE PRÉ-SINCRONIZAÇÃO (REFERÊNCIAS)
 # ---------------------------------------------------------
-def conectar_db():
-    try:
-        conexao = mysql.connector.connect(**DB_CONFIG)
-        logger.info("Conexão com o banco de dados estabelecida com sucesso.")
-        return conexao
-    except mysql.connector.Error as err:
-        logger.error(f"Erro crítico de conexão com o banco: {err}")
-        exit(1)
-
 def sincronizar_tipos_proposicao(conexao):
     cursor = conexao.cursor()
     url = f"{BASE_URL_SENADO}/processo/siglas"
-    resp = http_client.get(url, headers={'accept': 'application/json'})
+    resp = http_client.get_safe(url, headers={'accept': 'application/json'})
     mapa_tipos = {}
     
     if resp.status_code == 200:
@@ -71,7 +44,7 @@ def sincronizar_tipos_proposicao(conexao):
 def sincronizar_temas(conexao):
     cursor = conexao.cursor()
     url = f"{BASE_URL_SENADO}/processo/assuntos"
-    resp = http_client.get(url, headers={'accept': 'application/json'})
+    resp = http_client.get_safe(url, headers={'accept': 'application/json'})
     mapa_temas = {}
     
     if resp.status_code == 200:
@@ -105,12 +78,26 @@ def obter_senadores_ativos(cursor):
 
 def buscar_detalhes_processo_senado(id_processo_api):
     url = f"{BASE_URL_SENADO}/processo/{id_processo_api}?v=1"
-    resp = http_client.get(url, headers={'accept': 'application/json'})
+    resp = http_client.get_safe(url, headers={'accept': 'application/json'})
     return resp.json() if resp.status_code == 200 else None
 
+def extrair_autores_senado(detalhes):
+    codigos = []
+    for chave in ("autoriaIniciativa", "autoria"):
+        for autor in detalhes.get(chave, []) or []:
+            codigo = autor.get("codigoParlamentar")
+            if codigo:
+                codigos.append(str(codigo))
+
+    for autor in (detalhes.get("documento") or {}).get("autoria", []) or []:
+        codigo = autor.get("codigoParlamentar")
+        if codigo:
+            codigos.append(str(codigo))
+
+    return codigos
+
 def processar_proposicoes_senado():
-    conexao = conectar_db()
-    cursor = conexao.cursor()
+    conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "proposicao_senado_v1"
     
@@ -120,6 +107,7 @@ def processar_proposicoes_senado():
     senadores = obter_senadores_ativos(cursor)
     total_senadores = len(senadores)
     ultimo_senador_processado = chk_manager.obter(nome_script, "0")
+    mapa_parlamentares_senado = {str(id_api): id_parl for id_parl, id_api, _ in senadores}
     
     sql_proposicao = """
         INSERT INTO proposicao (idApi, idTipoProposicao, numero, ano, ementa, statusAtual, dataApresentacao)
@@ -135,9 +123,11 @@ def processar_proposicoes_senado():
 
     ano_inicio = int(os.getenv("ANO_INICIO_ETL", "2023"))
     ano_atual = datetime.now().year
-    anos_mandato = list(range(ano_inicio, ano_atual + 1)) 
+    anos_mandato = list(range(ano_inicio, ano_atual + 1))
 
-    for i, (id_parlamentar, id_api_senador, nome_urna) in enumerate(senadores, 1):
+    proposicoes_processadas = set()
+
+    for i, (_, id_api_senador, nome_urna) in enumerate(senadores, 1):
         if str(id_api_senador) <= ultimo_senador_processado and ultimo_senador_processado != "0":
             continue
             
@@ -146,31 +136,13 @@ def processar_proposicoes_senado():
         
         for ano in anos_mandato:
             url_lista = f"{BASE_URL_SENADO}/processo?ano={ano}&codigoParlamentarAutor={id_api_senador}&v=1"
-            
-            max_tentativas = 3
-            tentativa_atual = 0
-            sucesso_requisicao = False
-            resp_lista = None
 
-            while tentativa_atual < max_tentativas:
-                resp_lista = http_client.get(url_lista, headers={'accept': 'application/json'})
-                
-                if resp_lista.status_code == 200:
-                    sucesso_requisicao = True
-                    break
-                elif resp_lista.status_code in [429, 500, 502, 503, 504]:
-                    tentativa_atual += 1
-                    tempo_espera = 5 * tentativa_atual
-                    logger.warning(f"Aguardando {tempo_espera}s devido ao status HTTP {resp_lista.status_code}... (Tentativa {tentativa_atual}/{max_tentativas})")
-                    time.sleep(tempo_espera)
-                else:
-                    logger.error(f"Erro crítico HTTP {resp_lista.status_code} na URL: {url_lista}")
-                    break
-            
-            if not sucesso_requisicao:
+            resp_lista = http_client.get_safe(url_lista, headers={'accept': 'application/json'})
+            if resp_lista.status_code != 200:
+                logger.error(f"Erro crítico HTTP {resp_lista.status_code} na URL: {url_lista}")
                 sucesso_senador = False
                 continue
-                
+
             dados_lista = resp_lista.json()
             lista_props = dados_lista if isinstance(dados_lista, list) else dados_lista.get('Processos', [])
             
@@ -180,7 +152,10 @@ def processar_proposicoes_senado():
             for prop_basico in lista_props:
                 id_processo_lista = str(prop_basico.get('id'))
                 status_atual_lista = prop_basico.get('situacaoAtual')
-                
+
+                if id_processo_lista in proposicoes_processadas:
+                    continue
+
                 detalhes = buscar_detalhes_processo_senado(id_processo_lista)
                 if not detalhes:
                     time.sleep(0.5)
@@ -206,9 +181,12 @@ def processar_proposicoes_senado():
                     
                     cursor.execute(sql_get_prop_id, (codigo_materia,))
                     id_proposicao_interno = cursor.fetchone()[0]
-                    
-                    cursor.execute(sql_autoria, (id_parlamentar, id_proposicao_interno))
-                    
+
+                    for codigo_autor in extrair_autores_senado(detalhes):
+                        id_autor_parlamentar = mapa_parlamentares_senado.get(codigo_autor)
+                        if id_autor_parlamentar:
+                            cursor.execute(sql_autoria, (id_autor_parlamentar, id_proposicao_interno))
+
                     assuntos = detalhes.get('assuntos', []) or prop_basico.get('assuntos', [])
                     for a in assuntos:
                         cod_tema_api = a.get('id') or a.get('codigo')
@@ -216,13 +194,14 @@ def processar_proposicoes_senado():
                             id_tema_interno = map_temas.get(int(cod_tema_api))
                             if id_tema_interno:
                                 cursor.execute(sql_vincular_tema, (id_proposicao_interno, id_tema_interno))
-                    
+
                     conexao.commit()
+                    proposicoes_processadas.add(id_processo_lista)
                 except Exception as e:
                     conexao.rollback()
                     logger.error(f"Erro ao salvar proposição Senado {codigo_materia}: {e}")
                     sucesso_senador = False
-                
+
                 time.sleep(0.3)
                 
         if sucesso_senador:
