@@ -3,9 +3,10 @@ import sys
 import os
 
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
 from utils.etl_erro import EtlErro
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 
 logger = get_logger("VotoETL")
@@ -19,6 +20,7 @@ logger.info("Conexão estabelecida para Votos da Câmara.")
 chk_manager = CheckpointManager(db)
 
 script_camara = "popular/voto.py#camara_logs_ausencia_justificada"
+execucao = ExecucaoEtl(db, script_camara)
 
 cursor.execute("SELECT idApi, idParlamentar FROM parlamentar WHERE cargo = 'Deputado(a)'")
 map_parlamentares = {str(row[0]): row[1] for row in cursor.fetchall()}
@@ -50,8 +52,9 @@ def importar_votos_camara():
         for index, (id_api_votacao, id_votacao) in enumerate(votacoes):
             if id_votacao <= checkpoint_atual and str(id_api_votacao) not in pendentes:
                 continue
-            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos: 
+            if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
                 logger.warning("Tempo limite atingido para Votos da Câmara.")
+                execucao.finalizar("INTERROMPIDO", "tempo limite atingido")
                 break
             
             if index % 50 == 0:
@@ -62,7 +65,9 @@ def importar_votos_camara():
                 if res.status_code != 200: continue
                 
                 dados = res.json().get("dados", [])
-                
+
+                # A conexão pode ter caído durante a espera das chamadas HTTP
+                garantir_conexao(db)
                 if db.in_transaction: db.commit()
                 db.start_transaction()
 
@@ -106,6 +111,7 @@ def importar_votos_camara():
                         VALUES (%s, %s, %s, %s)
                     ''', batch)
                     total_votos += len(batch)
+                execucao.incrementar(processados=1, registros=len(batch) if dados else 0)
 
                 # Um item reprocessado da fila de erros não pode regredir o cursor
                 if id_votacao > checkpoint_atual:
@@ -118,12 +124,15 @@ def importar_votos_camara():
                 logger.error(f"Erro ao buscar votos da votação {id_votacao}: {e}")
                 if db.in_transaction: db.rollback()
                 fila_erros.registrar(str(id_api_votacao), e)
+                execucao.incrementar(erros=1)
                 continue
     except KeyboardInterrupt:
         logger.warning("Execução interrompida pelo usuário.")
         if db.in_transaction: db.rollback()
+        execucao.finalizar("INTERROMPIDO")
         sys.exit(0)
-    
+
+    execucao.finalizar("SUCESSO")
     logger.info(f"Concluído: {total_votos} votos da Câmara inseridos no total.")
 
 if __name__ == "__main__":

@@ -4,9 +4,10 @@ from decimal import Decimal, InvalidOperation
 from datetime import datetime
 
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
 from utils.etl_erro import EtlErro
+from utils.execucao import ExecucaoEtl
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
@@ -25,6 +26,7 @@ chk_manager = CheckpointManager(db)
 
 script_checkpoint = "popular/emenda.py#dinamico_v2"
 fila_erros = EtlErro(db, script_checkpoint)
+execucao = ExecucaoEtl(db, script_checkpoint)
 
 def converter_valor(valor):
     if valor is None or valor == "":
@@ -128,10 +130,6 @@ try:
                     continue
 
                 try:
-                    if db.in_transaction:
-                        db.commit()
-                    db.start_transaction()
-
                     url_documentos = f"https://api.portaldatransparencia.gov.br/api-de-dados/emendas/documentos/{codigo_emenda}"
                     time.sleep(SLEEP_SECONDS)
                     
@@ -156,6 +154,11 @@ try:
                     if not documentos_validos and ano in ANOS_ESCOPO:
                         if ano == ANO_INICIO:
                             continue
+
+                    garantir_conexao(db)
+                    if db.in_transaction:
+                        db.commit()
+                    db.start_transaction()
 
                     sql_emenda = '''
                         INSERT INTO emenda (
@@ -233,14 +236,16 @@ try:
                         )
                         cursor.execute(sql_documento, valores_documento)
                         contador_documentos += 1
-                        
+
                     db.commit()
+                    execucao.incrementar(processados=1, registros=1 + len(documentos_validos))
 
                 except Exception as e:
                     print(f" Erro ao processar emenda {codigo_emenda}: {e}")
                     if db.in_transaction:
                         db.rollback()
                     fila_erros.registrar(codigo_emenda, e)
+                    execucao.incrementar(erros=1)
             
             if db.in_transaction:
                 db.commit()
@@ -256,8 +261,12 @@ try:
 
 except KeyboardInterrupt:
     print(f"\n[!] Execução interrompida. O par {ano}_{pagina} será reprocessado.")
+    execucao.finalizar("INTERROMPIDO")
 except Exception as e:
     print(f"Erro geral no processamento: {e}")
+    execucao.finalizar("FALHA", str(e))
+
+execucao.finalizar("INTERROMPIDO" if interrompido else "SUCESSO")
 
 print("\n" + "=" * 50)
 print("Importação de emendas concluída!")

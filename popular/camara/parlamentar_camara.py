@@ -2,8 +2,9 @@ import sys
 import time
 from urllib.parse import urlparse
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 
 logger = get_logger("ETL_Camara")
@@ -90,6 +91,7 @@ def processar_camara():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "parlamentar_camara_v2"
+    execucao = ExecucaoEtl(conexao, nome_script)
 
     # A lista da API vem ordenada por nome, então o índice é um cursor estável
     # o suficiente para retomar uma carga interrompida no mesmo dia.
@@ -128,7 +130,11 @@ def processar_camara():
         if not detalhes:
             time.sleep(1)
             sucesso_total = False
+            execucao.incrementar(erros=1)
             continue
+
+        # A conexão pode ter caído durante a espera das chamadas HTTP
+        garantir_conexao(conexao)
             
         ultimo_status = detalhes.get('ultimoStatus', {})
         gabinete = ultimo_status.get('gabinete', {})
@@ -161,7 +167,8 @@ def processar_camara():
                     cursor.execute(sql_insert_rede, (id_parlamentar, plataforma, url))
             
             conexao.commit()
-            
+            execucao.incrementar(processados=1)
+
             # Atualiza checkpoint a cada 50 deputados, mas só enquanto nenhum
             # falhou — a retomada recomeça no primeiro que deu erro.
             if i % 50 == 0 and sucesso_total:
@@ -171,13 +178,16 @@ def processar_camara():
             conexao.rollback()
             logger.error(f"Erro ao salvar dados do deputado {id_api} no banco: {e}")
             sucesso_total = False
+            execucao.incrementar(erros=1)
 
         time.sleep(0.1) # Respeitar rate limit
 
     if sucesso_total:
         chk_manager.concluir(nome_script)
+        execucao.finalizar("SUCESSO")
         logger.info("Sincronização da Câmara finalizada com SUCESSO!")
     else:
+        execucao.finalizar("FALHA")
         logger.warning("Sincronização finalizada com erros; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()

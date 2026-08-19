@@ -4,8 +4,9 @@ from datetime import datetime
 from tqdm import tqdm
 
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
+from utils.execucao import ExecucaoEtl
 
 db, cursor = get_connection()
 print("[+] Conexão com o banco de dados estabelecida.\n")
@@ -20,6 +21,8 @@ MES_ATUAL = datetime.now().month
 ANOS_BUSCA = list(range(ANO_INICIO, ANO_ATUAL + 1))
 
 script_senado = "popular/despesas.py#senado_dinamico_v2"
+execucao = ExecucaoEtl(db, script_senado)
+interrompido = False
 
 cursor.execute("SELECT idApi, idParlamentar FROM parlamentar WHERE cargo = 'Senador(a)'")
 mapa_parlamentares = {str(p[0]): p[1] for p in cursor.fetchall()}
@@ -67,6 +70,8 @@ try:
             continue
 
         lote_senado = processar_despesas_senado_em_bloco(ano)
+        # A conexão pode ter caído durante o download do lote anual
+        garantir_conexao(db)
         batch_senado = []
 
         if lote_senado:
@@ -100,10 +105,14 @@ try:
 
             chk_manager.salvar(script_senado, str(ano))
             db.commit()
+            execucao.incrementar(processados=1, registros=len(batch_senado))
 
 except KeyboardInterrupt:
     if db.in_transaction: db.rollback()
     print("\n[!] Execução interrompida pelo usuário via KeyboardInterrupt.")
+    interrompido = True
+
+execucao.finalizar("INTERROMPIDO" if interrompido else "SUCESSO")
 
 print("\n" + "=" * 50)
 print(f"IMPORTAÇÃO FINALIZADA: {total_inserido} novos registros salvos nesta chamada.")

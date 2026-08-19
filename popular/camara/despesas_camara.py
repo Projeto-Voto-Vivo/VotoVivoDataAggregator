@@ -5,8 +5,9 @@ from datetime import datetime
 from tqdm import tqdm
 
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
+from utils.execucao import ExecucaoEtl
 
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 
@@ -23,6 +24,8 @@ MES_ATUAL = datetime.now().month
 ANOS_BUSCA = list(range(ANO_INICIO, ANO_ATUAL + 1))
 
 script_camara = "popular/despesas.py#camara_dinamico_v3"
+execucao = ExecucaoEtl(db, script_camara)
+interrompido = False
 
 # ORDER BY idParlamentar: o checkpoint compara ids na ordem da fila, então a
 # ordenação precisa ser estável e crescente para a retomada funcionar.
@@ -88,6 +91,8 @@ try:
             if ano == ano_chk and id_interno <= id_interno_chk: continue
 
             despesas = buscar_despesas_deputado(id_api, ano, meses_filtrados)
+            # A conexão pode ter caído durante a espera das chamadas HTTP
+            garantir_conexao(db)
             batch = []
             for d in despesas:
                 batch.append((
@@ -110,13 +115,21 @@ try:
 
             chk_manager.salvar(script_camara, f"{ano}_{id_interno}")
             db.commit()
+            execucao.incrementar(processados=1, registros=len(batch))
 
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+                interrompido = True
                 break
+
+        if interrompido:
+            break
 
 except KeyboardInterrupt:
     if db.in_transaction: db.rollback()
     print("\n[!] Execução interrompida pelo usuário via KeyboardInterrupt.")
+    interrompido = True
+
+execucao.finalizar("INTERROMPIDO" if interrompido else "SUCESSO")
 
 print("\n" + "=" * 50)
 print(f"IMPORTAÇÃO FINALIZADA: {total_inserido} novos registros salvos nesta chamada.")

@@ -3,9 +3,10 @@ import time
 from tqdm import tqdm
 
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
 from utils.etl_erro import EtlErro
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
 
@@ -20,6 +21,7 @@ orgaos = OrgaoCache(db, cursor, "Camara")
 
 script_camara = "popular/tramitacao.py#camara"
 fila_erros = EtlErro(db, script_camara)
+execucao = ExecucaoEtl(db, script_camara)
 
 cursor.execute("SELECT idTipoTramitacao, idApi FROM tipoTramitacao")
 map_tipo = {str(row[1]): row[0] for row in cursor.fetchall()}
@@ -55,11 +57,13 @@ def importar_tramitacao_camara():
 
     for id_interno, id_api in tqdm(fila_proposicoes, desc="Tramitações Câmara"):
         if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+            execucao.finalizar("INTERROMPIDO", "tempo limite atingido")
             break
 
         try:
             url = f"{BASE_URL_CAMARA}/proposicoes/{id_api}/tramitacoes"
             res = http_client.get_safe(url, timeout=30)
+            garantir_conexao(db)
 
             if res.status_code != 200:
                 if id_interno > checkpoint_atual:
@@ -101,19 +105,22 @@ def importar_tramitacao_camara():
             db.commit()
             if id_interno in pendentes:
                 fila_erros.resolver(id_interno)
+            execucao.incrementar(processados=1, registros=len(dados))
             time.sleep(0.1)
 
         except Exception as e:
             db.rollback()
             logger.error(f"Erro ao importar tramitações da proposição {id_interno} ({id_api}): {e}")
             fila_erros.registrar(id_interno, e)
+            execucao.incrementar(erros=1)
             continue
 
 if __name__ == "__main__":
     try:
         importar_tramitacao_camara()
+        execucao.finalizar("SUCESSO")
     except KeyboardInterrupt:
-        pass
+        execucao.finalizar("INTERROMPIDO")
     finally:
         cursor.close()
         db.close()

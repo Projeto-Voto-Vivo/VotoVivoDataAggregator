@@ -53,6 +53,7 @@ Bancos criados com uma versão anterior do `schema.sql` devem aplicar as migraç
 ```bash
 mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade_parte2.sql
+mysql -u <usuario> -p < popular/migrations/2026-08-19_metricas.sql
 ```
 
 ### Banco de testes
@@ -87,7 +88,7 @@ python popular/principal.py
 | 5     | `senado/tema_senado.py`                  | —                                    | Importa os assuntos do Senado                                                                         |
 | 6     | `camara/orgao_camara.py`                 | `camara/parlamentar_camara.py`       | Importa órgãos/comissões da Câmara e a relação de membros                                             |
 | 7     | `senado/orgao_senado.py`                 | `senado/parlamentar_senado.py`       | Importa órgãos/comissões do Senado e a relação de membros                                             |
-| 8     | `camara/proposicao_camara.py`            | `tipoProposicao`, `parlamentar_camara` | Importa proposições da Câmara, autores (incluindo coautores) e temas vinculados                     |
+| 8     | `camara/proposicao_camara.py`            | `tipoProposicao`, `parlamentar_camara` | Importa proposições da Câmara a partir dos **dumps anuais** oficiais (cobertura completa: inclui proposições do Executivo, de comissões e de ex-parlamentares), com autores e temas vinculados |
 | 9     | `senado/proposicao_senado.py`            | `tipoProposicao`, `parlamentar_senado` | Importa proposições do Senado, autores (incluindo coautores) e assuntos vinculados                  |
 | 10    | `camara/despesas_camara.py`              | `camara/parlamentar_camara.py`       | Importa despesas do mandato dos deputados (CEAP/verba de gabinete)                                    |
 | 11    | `senado/despesas_senado.py`              | `senado/parlamentar_senado.py`       | Importa despesas do mandato dos senadores (CEAPS)                                                     |
@@ -115,12 +116,13 @@ Toda a lógica repetida entre scripts vive em `utils/`, em vez de duplicada em c
 
 | Módulo | Responsabilidade |
 |--------|-------------------|
-| `utils/db.py` | `get_connection(**cursor_kwargs)` — abre a conexão MySQL a partir das variáveis de ambiente e devolve `(conexao, cursor)`. |
+| `utils/db.py` | `get_connection(**cursor_kwargs)` — abre a conexão MySQL a partir das variáveis de ambiente e devolve `(conexao, cursor)`. `garantir_conexao(db)` — reconecta se a conexão caiu (chamado pelos scripts após esperas longas de rede, antes de abrir a transação seguinte). |
 | `utils/logging_config.py` | `get_logger(nome)` — logger com formato padronizado. |
 | `utils/checkpoint_manager.py` | `CheckpointManager` — lê/grava o progresso na tabela `etlCheckpoint` (ver seção Checkpoints abaixo). |
 | `utils/http_client.py` | `http_client` (instância de `ResilientSession`) — cliente HTTP com retry automático e pausas de segurança contra rate limit (ver seção abaixo). |
 | `utils/orgao_cache.py` | `OrgaoCache` — resolve `idApi -> idOrgao` para uma casa, criando um registro placeholder em `orgao` quando o órgão ainda não é conhecido. |
 | `utils/etl_erro.py` | `EtlErro` — fila de erros (dead-letter) persistida na tabela `etlErro` (ver seção Fila de erros abaixo). |
+| `utils/execucao.py` | `ExecucaoEtl` — métricas por execução na tabela `etlExecucao` (ver seção Métricas abaixo). |
 
 ## Checkpoints
 
@@ -130,7 +132,7 @@ A tabela guarda duas informações separadas: o **cursor** de progresso (`ultimo
 
 - Se um script falha no meio (erro de rede, `RateLimitAbort`, Ctrl+C), o estado fica `EM_PROGRESSO` e a próxima execução retoma exatamente do primeiro item que falhou.
 - Se um script termina com falhas parciais, ele sai com código ≠ 0 (o `principal.py` interrompe o pipeline) e o cursor fica parado no último item bem-sucedido — basta rodar de novo.
-- Se um script já `CONCLUIDO` for reexecutado, ele recomeça do zero como um *refresh* completo (seguro, pois as cargas são upserts idempotentes).
+- Se um script já `CONCLUIDO` for reexecutado, ele recomeça do zero como um *refresh* completo (seguro, pois as cargas são upserts idempotentes). Exceções incrementais: `camara/proposicao_camara.py` e `emenda.py` reposicionam o cursor ao concluir, de modo que execuções seguintes atualizam apenas o **ano corrente** — para recarga total desses dois, apague o checkpoint.
 
 Para forçar a reexecução completa de um script, apague o checkpoint correspondente antes de rodá-lo:
 
@@ -145,6 +147,15 @@ Quando um item individual falha (uma votação, uma proposição, uma emenda), o
 ```sql
 SELECT nomeScript, chaveItem, erro, tentativas, dataUltimoErro
 FROM etlErro WHERE resolvido = 0;
+```
+
+## Métricas de execução (etlExecucao)
+
+Cada execução de script grava uma linha na tabela `etlExecucao` com início, fim, status (`SUCESSO`/`FALHA`/`INTERROMPIDO`), itens processados, registros gravados e erros. Uma linha que permanece `EM_EXECUCAO` indica que o processo morreu sem finalizar. Para auditar as últimas cargas:
+
+```sql
+SELECT nomeScript, dataInicio, dataFim, status, itensProcessados, registrosGravados, erros
+FROM etlExecucao ORDER BY dataInicio DESC LIMIT 30;
 ```
 
 ## Staging (cache HTTP)

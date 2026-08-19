@@ -1,8 +1,9 @@
 import sys
 import time
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 
 logger = get_logger("ETL_Orgao_Camara")
@@ -36,6 +37,7 @@ def processar_orgaos_camara():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "orgao_camara_v2"
+    execucao = ExecucaoEtl(conexao, nome_script)
 
     deputados = obter_deputados_ativos(cursor)
     map_orgaos = carregar_cache_orgaos(cursor)
@@ -71,8 +73,11 @@ def processar_orgaos_camara():
                 break
 
             lista_orgaos = resp_lista.json().get('dados', [])
-            if not lista_orgaos: 
+            if not lista_orgaos:
                 break
+
+            # A conexão pode ter caído durante a espera das chamadas HTTP
+            garantir_conexao(conexao)
                 
             for org_basico in lista_orgaos:
                 id_orgao_api = str(org_basico.get('idOrgao'))
@@ -119,6 +124,7 @@ def processar_orgaos_camara():
             
         if not sucesso_deputado:
             sucesso_total = False
+        execucao.incrementar(processados=1, erros=0 if sucesso_deputado else 1)
 
         if sucesso_total:
             chk_manager.salvar(nome_script, str(id_parlamentar))
@@ -126,8 +132,10 @@ def processar_orgaos_camara():
 
     if sucesso_total:
         chk_manager.concluir(nome_script)
+        execucao.finalizar("SUCESSO")
         logger.info("=== Sincronização de Órgãos e Membros da Câmara FINALIZADA ===")
     else:
+        execucao.finalizar("FALHA")
         logger.warning("Sincronização terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()

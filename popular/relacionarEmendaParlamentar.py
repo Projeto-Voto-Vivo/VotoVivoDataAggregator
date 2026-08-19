@@ -4,6 +4,7 @@ import time
 import unicodedata
 
 from utils.db import get_connection
+from utils.execucao import ExecucaoEtl
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
@@ -17,6 +18,7 @@ MESES = [
 ANO = os.getenv("EMENDAS_ANO")
 
 db, cursor = get_connection(dictionary=True)
+execucao = ExecucaoEtl(db, "popular/relacionarEmendaParlamentar.py")
 
 
 def normalizar_nome(nome):
@@ -312,6 +314,9 @@ for emenda in emendas:
     if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
         print(f"\n[LIMITE DE TEMPO] Interrompido após {tempo_limite_segundos}s.")
         break
+
+execucao.incrementar(processados=len(emendas), registros=contador_vinculado, erros=contador_erros)
+execucao.finalizar("SUCESSO" if contador_erros == 0 else "FALHA")
 
 print("\n" + "=" * 60)
 print("Relacionamento concluído")

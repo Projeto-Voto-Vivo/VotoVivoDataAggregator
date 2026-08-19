@@ -1,9 +1,10 @@
 import sys
 import time
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
 from utils.etl_erro import EtlErro
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
 
@@ -124,6 +125,7 @@ def processar_votacoes_presencas_senado():
 
     nome_script = "votacao_presenca_senado_v2"
     fila_erros = EtlErro(conexao, nome_script)
+    execucao = ExecucaoEtl(conexao, nome_script)
 
     logger.info("A carregar Senadores em atividade para a memória...")
     cursor.execute("SELECT idParlamentar, idApi FROM parlamentar WHERE cargo = 'Senador(a)'")
@@ -178,6 +180,8 @@ def processar_votacoes_presencas_senado():
 
         logger.info(f"[{i}/{total_props}] A procurar votações nominais para a Matéria ID {id_materia_api}...")
         resp = fazer_requisicao_com_retry(f"{BASE_URL}/votacao?codigoMateria={id_materia_api}&v=1")
+        # A conexão pode ter caído durante a espera das chamadas HTTP
+        garantir_conexao(conexao)
 
         if not resp:
             logger.info("   └─ Nenhuma votação nominal encontrada para esta matéria.")
@@ -290,6 +294,7 @@ def processar_votacoes_presencas_senado():
 
         if not sucesso_prop:
             sucesso_total = False
+        execucao.incrementar(processados=1, erros=0 if sucesso_prop else 1)
 
         if sucesso_total:
             chk_manager.salvar(nome_script, str(id_proposicao_interno))
@@ -297,8 +302,10 @@ def processar_votacoes_presencas_senado():
 
     if sucesso_total:
         chk_manager.concluir(nome_script)
+        execucao.finalizar("SUCESSO")
         logger.info("=== ETL DE VOTAÇÕES E PRESENÇAS DO SENADO FINALIZADO COM SUCESSO ===")
     else:
+        execucao.finalizar("FALHA")
         logger.warning("ETL terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()

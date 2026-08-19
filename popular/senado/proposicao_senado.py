@@ -3,8 +3,9 @@ import sys
 import time
 from datetime import datetime
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 
 logger = get_logger("ETL_Proposicao_Senado")
@@ -104,6 +105,7 @@ def processar_proposicoes_senado():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "proposicao_senado_v2"
+    execucao = ExecucaoEtl(conexao, nome_script)
 
     map_tipos = sincronizar_tipos_proposicao(conexao)
     map_temas = sincronizar_temas(conexao)
@@ -165,6 +167,9 @@ def processar_proposicoes_senado():
                 if not detalhes:
                     time.sleep(0.5)
                     continue
+
+                # A conexão pode ter caído durante a espera das chamadas HTTP
+                garantir_conexao(conexao)
                 
                 codigo_materia = str(detalhes.get('codigoMateria') or id_processo_lista)
                 sigla_tipo = detalhes.get('sigla')
@@ -202,10 +207,12 @@ def processar_proposicoes_senado():
 
                     conexao.commit()
                     proposicoes_processadas.add(id_processo_lista)
+                    execucao.incrementar(processados=1, registros=1)
                 except Exception as e:
                     conexao.rollback()
                     logger.error(f"Erro ao salvar proposição Senado {codigo_materia}: {e}")
                     sucesso_senador = False
+                    execucao.incrementar(erros=1)
 
                 time.sleep(0.3)
                 
@@ -218,8 +225,10 @@ def processar_proposicoes_senado():
 
     if sucesso_total:
         chk_manager.concluir(nome_script)
+        execucao.finalizar("SUCESSO")
         logger.info("Proposições do Senado sincronizadas com SUCESSO.")
     else:
+        execucao.finalizar("FALHA")
         logger.warning("Sincronização terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()

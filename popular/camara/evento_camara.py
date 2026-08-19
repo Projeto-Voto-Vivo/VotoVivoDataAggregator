@@ -5,8 +5,9 @@ import mysql.connector
 from datetime import datetime
 from bs4 import BeautifulSoup
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 
 logger = get_logger("ETL_Evento_Presenca_Camara")
@@ -35,6 +36,7 @@ def processar_eventos_presencas_camara():
     chk_manager = CheckpointManager(conexao)
     
     nome_script = "evento_presenca_camara_v2"
+    execucao = ExecucaoEtl(conexao, nome_script)
 
     cursor.execute("INSERT IGNORE INTO orgao (idApi, sigla, nome, tipoOrgao, casa) VALUES ('114', 'PLEN', 'Plenário da Câmara dos Deputados', 'Plenário', 'Camara')")
     cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '114' AND casa = 'Camara'")
@@ -84,6 +86,7 @@ def processar_eventos_presencas_camara():
         
         for ano in anos_mandato:
             resp_plen = http_client.get_safe(f"https://www.camara.leg.br/deputados/{id_api}/presenca-plenario/{ano}")
+            garantir_conexao(conexao)
             if resp_plen.status_code == 200:
                 soup = BeautifulSoup(resp_plen.text, 'html.parser')
                 linhas_sessao = soup.find_all('tr', class_='info-data__child')
@@ -121,6 +124,7 @@ def processar_eventos_presencas_camara():
             time.sleep(0.3)
 
             resp_com = http_client.get_safe(f"https://www.camara.leg.br/deputados/{id_api}/presenca-comissoes/{ano}")
+            garantir_conexao(conexao)
             if resp_com.status_code == 200:
                 soup = BeautifulSoup(resp_com.text, 'html.parser')
                 linhas = soup.find_all('tr')
@@ -181,14 +185,17 @@ def processar_eventos_presencas_camara():
 
         if not sucesso_deputado:
             sucesso_total = False
+        execucao.incrementar(processados=1, erros=0 if sucesso_deputado else 1)
 
         if sucesso_total:
             chk_manager.salvar(nome_script, str(id_parlamentar))
 
     if sucesso_total:
         chk_manager.concluir(nome_script)
+        execucao.finalizar("SUCESSO")
         logger.info("=== ETL de Eventos e Presenças da Câmara FINALIZADO com sucesso ===")
     else:
+        execucao.finalizar("FALHA")
         logger.warning("ETL terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()

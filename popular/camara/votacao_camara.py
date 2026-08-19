@@ -3,9 +3,10 @@ import time
 from datetime import date, datetime, timedelta
 
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
 from utils.etl_erro import EtlErro
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
 
@@ -22,6 +23,7 @@ orgaos = OrgaoCache(db, cursor, "Camara", logger=logger)
 
 script_camara = "popular/votacao.py#camara_logs"
 fila_erros = EtlErro(db, script_camara)
+execucao = ExecucaoEtl(db, script_camara)
 
 def obter_ultimo_dia_mes(ano, mes):
     if mes == 12: return 31
@@ -80,6 +82,7 @@ def importar_votacoes_camara():
             while True:
                 if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
                     logger.warning("Tempo limite atingido para a Câmara.")
+                    execucao.finalizar("INTERROMPIDO", "tempo limite atingido")
                     return
 
                 params = {"dataInicio": inicio, "dataFim": fim, "itens": 100, "pagina": pagina}
@@ -96,6 +99,8 @@ def importar_votacoes_camara():
                         logger.info(f"  -> Fim das votações para {num_mes:02d}/{ano}.")
                         break
 
+                    # A conexão pode ter caído durante a espera das chamadas HTTP
+                    garantir_conexao(db)
                     if db.in_transaction: db.commit()
                     db.start_transaction()
 
@@ -157,11 +162,13 @@ def importar_votacoes_camara():
                         except Exception as e:
                             logger.error(f"Erro ao processar detalhes da votação {id_api}: {e}")
                             fila_erros.registrar(str(id_api), e)
+                            execucao.incrementar(erros=1)
                             continue
 
                     chk_manager.salvar(script_camara, f"{ano}_{num_mes}_{pagina}")
                     db.commit()
                     total_inserido += inseridos_pagina
+                    execucao.incrementar(processados=inseridos_pagina, registros=inseridos_pagina)
                     logger.info(f"  -> Página {pagina} processada: {inseridos_pagina} votações salvas.")
 
                     if len(dados) < 100: break
@@ -186,13 +193,16 @@ if __name__ == "__main__":
     try:
         logger.info("Iniciando Pipeline de Votações da Câmara...")
         importar_votacoes_camara()
+        execucao.finalizar("SUCESSO")
         logger.info("Pipeline de Votações da Câmara concluído com sucesso!")
     except KeyboardInterrupt:
         logger.warning("Execução interrompida pelo usuário (Ctrl+C).")
         if db.in_transaction: db.rollback()
+        execucao.finalizar("INTERROMPIDO")
     except Exception as e:
         logger.critical(f"Erro crítico não tratado: {e}")
         if db.in_transaction: db.rollback()
+        execucao.finalizar("FALHA", str(e))
     finally:
         cursor.close()
         db.close()

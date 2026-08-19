@@ -2,8 +2,9 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 
 logger = get_logger("ETL_Senado")
@@ -85,6 +86,7 @@ def processar_senado():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "parlamentar_senado_v2"
+    execucao = ExecucaoEtl(conexao, nome_script)
 
     # A lista da API tem ordem estável, então o índice serve de cursor para
     # retomar uma carga interrompida no mesmo dia.
@@ -126,7 +128,11 @@ def processar_senado():
         if detalhes_xml is None:
             time.sleep(1)
             sucesso_total = False
+            execucao.incrementar(erros=1)
             continue
+
+        # A conexão pode ter caído durante a espera das chamadas HTTP
+        garantir_conexao(conexao)
             
         # Extrair dados agregados
         nome_civil = get_xml_text(detalhes_xml, 'NomeCompletoParlamentar') or get_xml_text(parlamentar_xml, 'NomeCompletoParlamentar')
@@ -149,6 +155,7 @@ def processar_senado():
             )
             cursor.execute(sql_parlamentar, valores)
             conexao.commit()
+            execucao.incrementar(processados=1)
             
             # Checkpoint a cada 20 senadores, mas só enquanto nenhum falhou —
             # a retomada recomeça no primeiro que deu erro.
@@ -159,13 +166,16 @@ def processar_senado():
             conexao.rollback()
             logger.error(f"Erro ao salvar dados do senador {id_api} no banco: {e}")
             sucesso_total = False
+            execucao.incrementar(erros=1)
 
         time.sleep(0.1) # Respeitar limites da API do Senado
 
     if sucesso_total:
         chk_manager.concluir(nome_script)
+        execucao.finalizar("SUCESSO")
         logger.info("Sincronização do Senado finalizada com SUCESSO!")
     else:
+        execucao.finalizar("FALHA")
         logger.warning("Sincronização finalizada com erros; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()

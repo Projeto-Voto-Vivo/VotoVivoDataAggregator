@@ -3,9 +3,10 @@ import time
 from tqdm import tqdm
 
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
 from utils.etl_erro import EtlErro
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
 
@@ -21,6 +22,7 @@ orgaos = OrgaoCache(db, cursor, "Senado")
 
 script_senado = "popular/tramitacao.py#senado"
 fila_erros = EtlErro(db, script_senado)
+execucao = ExecucaoEtl(db, script_senado)
 
 def importar_tramitacao_senado():
     checkpoint_atual = int(chk_manager.obter(script_senado, default_value="0"))
@@ -51,11 +53,13 @@ def importar_tramitacao_senado():
 
     for id_interno, id_api in tqdm(fila_proposicoes, desc="Tramitações Senado"):
         if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
+            execucao.finalizar("INTERROMPIDO", "tempo limite atingido")
             break
 
         try:
             url = f"{BASE_URL_SENADO}/materia/movimentacoes/{id_api}"
             res = http_client.get_safe(url, headers=headers, timeout=30)
+            garantir_conexao(db)
 
             if res.status_code != 200:
                 if id_interno > checkpoint_atual:
@@ -101,19 +105,22 @@ def importar_tramitacao_senado():
             db.commit()
             if id_interno in pendentes:
                 fila_erros.resolver(id_interno)
+            execucao.incrementar(processados=1, registros=len(historico))
             time.sleep(0.1)
 
         except Exception as e:
             db.rollback()
             logger.error(f"Erro ao importar tramitações da matéria {id_interno} ({id_api}): {e}")
             fila_erros.registrar(id_interno, e)
+            execucao.incrementar(erros=1)
             continue
 
 if __name__ == "__main__":
     try:
         importar_tramitacao_senado()
+        execucao.finalizar("SUCESSO")
     except KeyboardInterrupt:
-        pass
+        execucao.finalizar("INTERROMPIDO")
     finally:
         cursor.close()
         db.close()

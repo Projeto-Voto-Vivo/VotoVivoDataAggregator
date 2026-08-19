@@ -2,8 +2,9 @@ import sys
 import time
 import xml.etree.ElementTree as ET
 from utils.http_client import http_client
-from utils.db import get_connection
+from utils.db import get_connection, garantir_conexao
 from utils.checkpoint_manager import CheckpointManager
+from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 
 logger = get_logger("ETL_Orgao_Senado")
@@ -46,6 +47,7 @@ def processar_orgaos_senado():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
     nome_script = "orgao_senado_v2"
+    execucao = ExecucaoEtl(conexao, nome_script)
 
     senadores = obter_senadores_ativos(cursor)
     map_orgaos = carregar_cache_orgaos(cursor)
@@ -78,6 +80,9 @@ def processar_orgaos_senado():
             logger.error(f"Erro crítico HTTP {resp_lista.status_code} na URL: {url_lista}")
             sucesso_senador = False
             continue
+
+        # A conexão pode ter caído durante a espera das chamadas HTTP
+        garantir_conexao(conexao)
 
         try:
             root = ET.fromstring(resp_lista.content)
@@ -131,6 +136,7 @@ def processar_orgaos_senado():
             
         if not sucesso_senador:
             sucesso_total = False
+        execucao.incrementar(processados=1, erros=0 if sucesso_senador else 1)
             
         if sucesso_total:
             chk_manager.salvar(nome_script, str(id_parlamentar))
@@ -138,8 +144,10 @@ def processar_orgaos_senado():
 
     if sucesso_total:
         chk_manager.concluir(nome_script)
+        execucao.finalizar("SUCESSO")
         logger.info("=== Sincronização de Órgãos e Membros do Senado FINALIZADA ===")
     else:
+        execucao.finalizar("FALHA")
         logger.warning("Sincronização terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()
