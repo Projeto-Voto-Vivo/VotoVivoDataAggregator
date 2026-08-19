@@ -21,10 +21,15 @@ MES_ATUAL = datetime.now().month
 
 ANOS_BUSCA = list(range(ANO_INICIO, ANO_ATUAL + 1))
 
-script_camara = "popular/despesas.py#camara_dinamico_v2"
+script_camara = "popular/despesas.py#camara_dinamico_v3"
 
-cursor.execute("SELECT idApi, idParlamentar, cargo FROM parlamentar")
-deputados = [p for p in cursor.fetchall() if p[2] == "Deputado(a)"]
+# ORDER BY idParlamentar: o checkpoint compara ids na ordem da fila, então a
+# ordenação precisa ser estável e crescente para a retomada funcionar.
+cursor.execute("""
+    SELECT idApi, idParlamentar FROM parlamentar
+    WHERE cargo = 'Deputado(a)' ORDER BY idParlamentar ASC
+""")
+deputados = cursor.fetchall()
 
 total_inserido = 0
 
@@ -65,7 +70,7 @@ try:
         ano_chk, id_interno_chk = map(int, checkpoint_camara_atual.split('_'))
 
         start_time = time.time()
-        for id_api, id_interno, _ in tqdm(deputados, desc=f"Deputados {ano}"):
+        for id_api, id_interno in tqdm(deputados, desc=f"Deputados {ano}"):
             if ano < ano_chk: continue
             if ano == ano_chk and id_interno <= id_interno_chk: continue
 

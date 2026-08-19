@@ -21,8 +21,7 @@ def importar_tramitacao_senado():
     checkpoint_atual = int(chk_manager.obter(script_senado, default_value="0"))
     cursor.execute("""
         SELECT p.idProposicao, p.idApi FROM proposicao p
-        JOIN tipoProposicao t ON p.idTipoProposicao = t.idTipoProposicao
-        WHERE t.casa = 'Senado' AND p.idApi IS NOT NULL AND p.idProposicao > %s
+        WHERE p.casa = 'Senado' AND p.idApi IS NOT NULL AND p.idProposicao > %s
         ORDER BY p.idProposicao ASC
     """, (checkpoint_atual,))
     fila_proposicoes = cursor.fetchall()

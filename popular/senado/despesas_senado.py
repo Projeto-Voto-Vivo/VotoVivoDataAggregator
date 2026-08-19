@@ -20,7 +20,7 @@ ANOS_BUSCA = list(range(ANO_INICIO, ANO_ATUAL + 1))
 
 script_senado = "popular/despesas.py#senado_dinamico_v2"
 
-cursor.execute("SELECT idApi, idParlamentar FROM parlamentar")
+cursor.execute("SELECT idApi, idParlamentar FROM parlamentar WHERE cargo = 'Senador(a)'")
 mapa_parlamentares = {str(p[0]): p[1] for p in cursor.fetchall()}
 
 total_inserido = 0

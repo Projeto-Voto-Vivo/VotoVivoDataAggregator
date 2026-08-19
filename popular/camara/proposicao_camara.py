@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from datetime import datetime
 from utils.http_client import http_client
@@ -66,7 +67,12 @@ def sincronizar_temas(conexao):
 # 3. LÓGICA DE EXTRAÇÃO E INSERÇÃO
 # ---------------------------------------------------------
 def obter_deputados_ativos(cursor):
-    cursor.execute("SELECT idParlamentar, idApi, nomeUrna FROM parlamentar WHERE cargo = 'Deputado(a)'")
+    # ORDER BY idParlamentar: o checkpoint guarda o último idParlamentar concluído,
+    # então a fila precisa de uma ordem estável e crescente para a retomada funcionar.
+    cursor.execute("""
+        SELECT idParlamentar, idApi, nomeUrna FROM parlamentar
+        WHERE cargo = 'Deputado(a)' ORDER BY idParlamentar ASC
+    """)
     return cursor.fetchall()
 
 def buscar_detalhes_proposicao(id_prop_api):
@@ -95,25 +101,25 @@ def buscar_autores_camara(id_prop_api):
 def processar_proposicoes_camara():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
-    nome_script = "proposicao_camara_v2"
-    
+    nome_script = "proposicao_camara_v3"
+
     map_tipos = sincronizar_tipos_proposicao(conexao)
     map_temas = sincronizar_temas(conexao)
-    
+
     deputados = obter_deputados_ativos(cursor)
     total_deputados = len(deputados)
-    ultimo_deputado_processado = chk_manager.obter(nome_script, "0")
+    ultimo_processado = int(chk_manager.obter(nome_script, "0", reiniciar_se_concluido=True))
     mapa_parlamentares_camara = {str(id_api): id_parl for id_parl, id_api, _ in deputados}
-    
+
     sql_proposicao = """
-        INSERT INTO proposicao (idApi, idTipoProposicao, numero, ano, ementa, statusAtual, dataApresentacao)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO proposicao (idApi, casa, idTipoProposicao, numero, ano, ementa, statusAtual, dataApresentacao)
+        VALUES (%s, 'Camara', %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
-        idTipoProposicao=VALUES(idTipoProposicao), numero=VALUES(numero), 
+        idTipoProposicao=VALUES(idTipoProposicao), numero=VALUES(numero),
         ano=VALUES(ano), ementa=VALUES(ementa), statusAtual=VALUES(statusAtual),
         dataApresentacao=VALUES(dataApresentacao)
     """
-    sql_get_prop_id = "SELECT idProposicao FROM proposicao WHERE idApi = %s"
+    sql_get_prop_id = "SELECT idProposicao FROM proposicao WHERE idApi = %s AND casa = 'Camara'"
     sql_autoria = "INSERT IGNORE INTO autoriaProposicao (idParlamentar, idProposicao) VALUES (%s, %s)"
     sql_vincular_tema = "INSERT IGNORE INTO temaProposicao (idProposicao, idTema) VALUES (%s, %s)"
 
@@ -122,11 +128,12 @@ def processar_proposicoes_camara():
     anos_mandato = list(range(ano_inicio, ano_atual + 1))
 
     proposicoes_processadas = set()
+    sucesso_total = True
 
-    for i, (_, id_api_deputado, nome_urna) in enumerate(deputados, 1):
-        if str(id_api_deputado) <= ultimo_deputado_processado and ultimo_deputado_processado != "0":
+    for i, (id_parlamentar, id_api_deputado, nome_urna) in enumerate(deputados, 1):
+        if id_parlamentar <= ultimo_processado:
             continue
-            
+
         logger.info(f"[{i}/{total_deputados}] Buscando proposições de: {nome_urna}")
         sucesso_deputado = True
         
@@ -199,13 +206,23 @@ def processar_proposicoes_camara():
                     
                 pagina += 1
                 
-        if sucesso_deputado:
-            chk_manager.salvar(nome_script, str(id_api_deputado))
+        if not sucesso_deputado:
+            sucesso_total = False
+
+        if sucesso_total:
+            chk_manager.salvar(nome_script, str(id_parlamentar))
             time.sleep(1)
 
-    chk_manager.salvar(nome_script, "CONCLUIDO_" + datetime.now().strftime('%Y-%m-%d'))
+    if sucesso_total:
+        chk_manager.concluir(nome_script)
+        logger.info("Proposições da Câmara sincronizadas com SUCESSO.")
+    else:
+        logger.warning("Sincronização terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
+
     cursor.close()
     conexao.close()
+    return sucesso_total
 
 if __name__ == "__main__":
-    processar_proposicoes_camara()
+    if not processar_proposicoes_camara():
+        sys.exit(1)

@@ -1,6 +1,6 @@
+import sys
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
@@ -14,13 +14,17 @@ BASE_URL_SENADO = 'https://legis.senado.leg.br/dadosabertos'
 # 2. FUNÇÕES DE BANCO E AUXILIARES
 # ---------------------------------------------------------
 def obter_senadores_ativos(cursor):
-    cursor.execute("SELECT idParlamentar, idApi, nomeUrna FROM parlamentar WHERE cargo = 'Senador(a)'")
+    cursor.execute("""
+        SELECT idParlamentar, idApi, nomeUrna FROM parlamentar
+        WHERE cargo = 'Senador(a)' ORDER BY idParlamentar ASC
+    """)
     return cursor.fetchall()
 
 def carregar_cache_orgaos(cursor):
-    """Carrega os órgãos já existentes no banco para a memória, evitando INSERTs redundantes"""
-    cursor.execute("SELECT idApi, idOrgao FROM orgao WHERE casa IN ('Senado', 'Congresso')")
-    return {str(row[0]): row[1] for row in cursor.fetchall()}
+    """Carrega os órgãos já existentes no banco para a memória, evitando INSERTs redundantes.
+    A chave é (idApi, casa): os códigos de órgão colidem entre as casas."""
+    cursor.execute("SELECT idApi, casa, idOrgao FROM orgao")
+    return {(str(row[0]), row[1]): row[2] for row in cursor.fetchall()}
 
 def get_xml_text(element, tag_name, default=None):
     """Busca recursivamente uma tag no XML e retorna o seu texto."""
@@ -41,27 +45,28 @@ def mapear_casa(sigla_casa_xml):
 def processar_orgaos_senado():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
-    nome_script = "orgao_senado_v1"
-    
+    nome_script = "orgao_senado_v2"
+
     senadores = obter_senadores_ativos(cursor)
     map_orgaos = carregar_cache_orgaos(cursor)
-    
+
     total_senadores = len(senadores)
-    ultimo_senador_processado = chk_manager.obter(nome_script, "0")
-    
+    ultimo_processado = int(chk_manager.obter(nome_script, "0", reiniciar_se_concluido=True))
+    sucesso_total = True
+
     sql_orgao = """
         INSERT INTO orgao (idApi, sigla, nome, tipoOrgao, casa)
         VALUES (%s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE sigla=VALUES(sigla), nome=VALUES(nome), tipoOrgao=VALUES(tipoOrgao)
     """
 
-    sql_get_orgao_id = "SELECT idOrgao FROM orgao WHERE idApi = %s AND casa IN ('Senado', 'Congresso')"
+    sql_get_orgao_id = "SELECT idOrgao FROM orgao WHERE idApi = %s AND casa = %s"
     sql_membro = "INSERT IGNORE INTO membroOrgao (idParlamentar, idOrgao, cargo) VALUES (%s, %s, %s)"
 
     for i, (id_parlamentar, id_api_senador, nome_urna) in enumerate(senadores, 1):
-        if str(id_api_senador) <= ultimo_senador_processado and ultimo_senador_processado != "0":
+        if id_parlamentar <= ultimo_processado:
             continue
-            
+
         logger.info(f"[{i}/{total_senadores}] Buscando órgãos/comissões de: {nome_urna}")
         sucesso_senador = True
         
@@ -99,15 +104,16 @@ def processar_orgaos_senado():
 
                 try:
                     # 1. Inserir ou recuperar Órgão (Graças à riqueza do XML do Senado, não precisamos de ir buscar os detalhes)
-                    if id_orgao_api not in map_orgaos:
+                    chave_orgao = (id_orgao_api, casa_db)
+                    if chave_orgao not in map_orgaos:
                         cursor.execute(sql_orgao, (id_orgao_api, sigla_orgao, nome_orgao, tipo_orgao, casa_db))
-                        
-                        cursor.execute(sql_get_orgao_id, (id_orgao_api,))
+
+                        cursor.execute(sql_get_orgao_id, (id_orgao_api, casa_db))
                         resultado_id = cursor.fetchone()
                         if resultado_id:
-                            map_orgaos[id_orgao_api] = resultado_id[0]
-                    
-                    id_orgao_interno = map_orgaos.get(id_orgao_api)
+                            map_orgaos[chave_orgao] = resultado_id[0]
+
+                    id_orgao_interno = map_orgaos.get(chave_orgao)
                     
                     # 2. Inserir a relação de membresia (Parlamentar <-> Órgão)
                     if id_orgao_interno:
@@ -123,15 +129,23 @@ def processar_orgaos_senado():
             logger.error(f"Erro ao fazer o parse do XML para o senador {id_api_senador}: {e}")
             sucesso_senador = False
             
-        if sucesso_senador:
-            chk_manager.salvar(nome_script, str(id_api_senador))
+        if not sucesso_senador:
+            sucesso_total = False
+            
+        if sucesso_total:
+            chk_manager.salvar(nome_script, str(id_parlamentar))
             time.sleep(0.3)
 
-    chk_manager.salvar(nome_script, "CONCLUIDO_" + datetime.now().strftime('%Y-%m-%d'))
-    logger.info("=== Sincronização de Órgãos e Membros do Senado FINALIZADA ===")
-    
+    if sucesso_total:
+        chk_manager.concluir(nome_script)
+        logger.info("=== Sincronização de Órgãos e Membros do Senado FINALIZADA ===")
+    else:
+        logger.warning("Sincronização terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
+
     cursor.close()
     conexao.close()
+    return sucesso_total
 
 if __name__ == "__main__":
-    processar_orgaos_senado()
+    if not processar_orgaos_senado():
+        sys.exit(1)

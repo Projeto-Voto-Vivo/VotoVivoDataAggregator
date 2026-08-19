@@ -56,13 +56,7 @@ def popular_tipo_proposicao():
     print(" POPULANDO TABELA tipoProposicao")
     print("=" * 60)
 
-    print("\n Limpando tabela tipoProposicao...")
-    cursor.execute("SET FOREIGN_KEY_CHECKS = 0;")
-    cursor.execute("TRUNCATE tipoProposicao;")
-    cursor.execute("SET FOREIGN_KEY_CHECKS = 1;")
-    print("    Tabela limpa com sucesso!")
-
-    print("\n Inserindo tipos...")
+    print("\n Inserindo/atualizando tipos...")
     inseridos = {"Camara": 0, "Senado": 0, "Congresso": 0}
 
     for sigla, casa, nome in TIPOS_FIXOS:
@@ -70,6 +64,7 @@ def popular_tipo_proposicao():
             """
             INSERT INTO tipoProposicao (sigla, nome, casa)
             VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE nome = VALUES(nome)
         """,
             (sigla, nome, casa),
         )

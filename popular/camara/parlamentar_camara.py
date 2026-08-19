@@ -1,6 +1,6 @@
+import sys
 import time
 from urllib.parse import urlparse
-from datetime import datetime
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
@@ -89,9 +89,13 @@ def buscar_detalhes_deputado(id_api):
 def processar_camara():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
-    nome_script = "parlamentar_camara_v1"
-    
-    
+    nome_script = "parlamentar_camara_v2"
+
+    # A lista da API vem ordenada por nome, então o índice é um cursor estável
+    # o suficiente para retomar uma carga interrompida no mesmo dia.
+    progresso = chk_manager.obter(nome_script, "INDEX_0", reiniciar_se_concluido=True)
+    indice_inicial = int(progresso.rsplit("_", 1)[-1]) if progresso.startswith("INDEX_") else 0
+
     deputados_basico = buscar_deputados()
     total = len(deputados_basico)
     
@@ -107,13 +111,16 @@ def processar_camara():
         condicao_mandato=VALUES(condicao_mandato)
     """
 
-    sql_get_id = "SELECT idParlamentar FROM parlamentar WHERE idApi = %s"
+    sql_get_id = "SELECT idParlamentar FROM parlamentar WHERE idApi = %s AND cargo = 'Deputado(a)'"
     sql_delete_redes = "DELETE FROM redeSocial WHERE idParlamentar = %s"
     sql_insert_rede = "INSERT INTO redeSocial (idParlamentar, plataforma, url) VALUES (%s, %s, %s)"
 
     sucesso_total = True
 
     for i, dep in enumerate(deputados_basico, 1):
+        if i <= indice_inicial:
+            continue
+
         id_api = str(dep['id'])
         logger.info(f"[{i}/{total}] Processando detalhes: {dep['nome']} ({id_api})")
         
@@ -155,9 +162,10 @@ def processar_camara():
             
             conexao.commit()
             
-            # Atualiza checkpoint a cada 50 deputados inseridos para manter tracking
-            if i % 50 == 0:
-                chk_manager.salvar(nome_script, f"PROCESSADO_ATE_INDEX_{i}")
+            # Atualiza checkpoint a cada 50 deputados, mas só enquanto nenhum
+            # falhou — a retomada recomeça no primeiro que deu erro.
+            if i % 50 == 0 and sucesso_total:
+                chk_manager.salvar(nome_script, f"INDEX_{i}")
                 
         except Exception as e:
             conexao.rollback()
@@ -167,15 +175,16 @@ def processar_camara():
         time.sleep(0.1) # Respeitar rate limit
 
     if sucesso_total:
-        data_hoje = datetime.now().strftime('%Y-%m-%d')
-        chk_manager.salvar(nome_script, f"CONCLUIDO_{data_hoje}")
+        chk_manager.concluir(nome_script)
         logger.info("Sincronização da Câmara finalizada com SUCESSO!")
     else:
-        logger.warning("Sincronização finalizada, mas com alguns erros. Verifique os logs.")
+        logger.warning("Sincronização finalizada com erros; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()
     conexao.close()
+    return sucesso_total
 
 if __name__ == "__main__":
     logger.info("=== INICIANDO SCRIPT DE CARGA: CÂMARA DOS DEPUTADOS ===")
-    processar_camara()
+    if not processar_camara():
+        sys.exit(1)

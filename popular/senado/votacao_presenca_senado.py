@@ -1,5 +1,5 @@
+import sys
 import time
-from datetime import datetime
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
@@ -44,28 +44,28 @@ def processar_votacoes_presencas_senado():
     chk_manager = CheckpointManager(conexao)
     orgaos = OrgaoCache(conexao, cursor, "Senado", logger=logger)
 
-    nome_script = "votacao_presenca_senado"
-    
+    nome_script = "votacao_presenca_senado_v2"
+
     logger.info("A carregar Senadores em atividade para a memória...")
     cursor.execute("SELECT idParlamentar, idApi FROM parlamentar WHERE cargo = 'Senador(a)'")
     map_senadores = {str(row['idApi']): row['idParlamentar'] for row in cursor.fetchall()}
     total_senadores_ativos = len(map_senadores)
     logger.info(f"Total de senadores ativos carregados: {total_senadores_ativos}")
-    
+
+    ultimo_processado = int(chk_manager.obter(nome_script, "0", reiniciar_se_concluido=True))
+    sucesso_total = True
+
     cursor.execute("""
-        SELECT p.idProposicao, p.idApi 
+        SELECT p.idProposicao, p.idApi
         FROM proposicao p
-        JOIN tipoProposicao tp ON p.idTipoProposicao = tp.idTipoProposicao
-        WHERE tp.casa = 'Senado'
-        ORDER BY p.ano DESC, p.idProposicao DESC
-    """)
+        WHERE p.casa = 'Senado' AND p.idProposicao > %s
+        ORDER BY p.idProposicao ASC
+    """, (ultimo_processado,))
     proposicoes = cursor.fetchall()
     total_props = len(proposicoes)
-    
-    ultimo_processado = chk_manager.obter(nome_script, "0")
-    
+
     cursor.execute("INSERT IGNORE INTO orgao (idApi, sigla, nome, tipoOrgao, casa) VALUES ('1001', 'PLEN-SF', 'Plenário do Senado Federal', 'Plenário', 'Senado')")
-    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '1001'")
+    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '1001' AND casa = 'Senado'")
     id_plenario_senado = cursor.fetchone()['idOrgao']
     conexao.commit()
 
@@ -74,17 +74,17 @@ def processar_votacoes_presencas_senado():
     for i, prop in enumerate(proposicoes, 1):
         id_proposicao_interno = prop['idProposicao']
         id_materia_api = str(prop['idApi'])
-        
-        if id_materia_api <= ultimo_processado and ultimo_processado != "0":
-            continue
-            
+        sucesso_prop = True
+
         logger.info(f"[{i}/{total_props}] A procurar votações nominais para a Matéria ID {id_materia_api}...")
         resp = fazer_requisicao_com_retry(f"{BASE_URL}/votacao?codigoMateria={id_materia_api}&v=1")
-        
+
         if not resp:
             logger.info("   └─ Nenhuma votação nominal encontrada para esta matéria.")
+            if sucesso_total:
+                chk_manager.salvar(nome_script, str(id_proposicao_interno))
             continue
-            
+
         lista_votacoes = resp.json()
         if not isinstance(lista_votacoes, list): lista_votacoes = [lista_votacoes]
             
@@ -189,14 +189,25 @@ def processar_votacoes_presencas_senado():
             except Exception as e:
                 conexao.rollback()
                 logger.error(f"Erro ao processar votação {id_sessao}: {e}")
-                
-        chk_manager.salvar(nome_script, str(id_materia_api))
+                sucesso_prop = False
+
+        if not sucesso_prop:
+            sucesso_total = False
+
+        if sucesso_total:
+            chk_manager.salvar(nome_script, str(id_proposicao_interno))
         time.sleep(0.3)
 
-    chk_manager.salvar(nome_script, "CONCLUIDO_" + datetime.now().strftime('%Y-%m-%d'))
-    logger.info("=== ETL DE VOTAÇÕES E PRESENÇAS DO SENADO FINALIZADO COM SUCESSO ===")
+    if sucesso_total:
+        chk_manager.concluir(nome_script)
+        logger.info("=== ETL DE VOTAÇÕES E PRESENÇAS DO SENADO FINALIZADO COM SUCESSO ===")
+    else:
+        logger.warning("ETL terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
+
     cursor.close()
     conexao.close()
+    return sucesso_total
 
 if __name__ == "__main__":
-    processar_votacoes_presencas_senado()
+    if not processar_votacoes_presencas_senado():
+        sys.exit(1)

@@ -1,5 +1,5 @@
+import sys
 import time
-from datetime import datetime
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
@@ -13,7 +13,10 @@ BASE_URL = 'https://dadosabertos.camara.leg.br/api/v2'
 # 2. FUNÇÕES DE BANCO E CACHE
 # ---------------------------------------------------------
 def obter_deputados_ativos(cursor):
-    cursor.execute("SELECT idParlamentar, idApi, nomeUrna FROM parlamentar WHERE cargo = 'Deputado(a)'")
+    cursor.execute("""
+        SELECT idParlamentar, idApi, nomeUrna FROM parlamentar
+        WHERE cargo = 'Deputado(a)' ORDER BY idParlamentar ASC
+    """)
     return cursor.fetchall()
 
 def carregar_cache_orgaos(cursor):
@@ -32,13 +35,14 @@ def buscar_detalhes_orgao(id_orgao_api):
 def processar_orgaos_camara():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
-    nome_script = "orgao_camara_v1"
-    
+    nome_script = "orgao_camara_v2"
+
     deputados = obter_deputados_ativos(cursor)
     map_orgaos = carregar_cache_orgaos(cursor)
-    
+
     total_deputados = len(deputados)
-    ultimo_deputado_processado = chk_manager.obter(nome_script, "0")
+    ultimo_processado = int(chk_manager.obter(nome_script, "0", reiniciar_se_concluido=True))
+    sucesso_total = True
     
     sql_orgao = """
         INSERT INTO orgao (idApi, sigla, nome, tipoOrgao, casa)
@@ -50,9 +54,9 @@ def processar_orgaos_camara():
     sql_membro = "INSERT IGNORE INTO membroOrgao (idParlamentar, idOrgao, cargo) VALUES (%s, %s, %s)"
 
     for i, (id_parlamentar, id_api_deputado, nome_urna) in enumerate(deputados, 1):
-        if str(id_api_deputado) <= ultimo_deputado_processado and ultimo_deputado_processado != "0":
+        if id_parlamentar <= ultimo_processado:
             continue
-            
+
         logger.info(f"[{i}/{total_deputados}] Buscando órgãos/comissões de: {nome_urna}")
         sucesso_deputado = True
         
@@ -113,15 +117,23 @@ def processar_orgaos_camara():
             pagina += 1
             time.sleep(0.2)
             
-        if sucesso_deputado:
-            chk_manager.salvar(nome_script, str(id_api_deputado))
+        if not sucesso_deputado:
+            sucesso_total = False
+
+        if sucesso_total:
+            chk_manager.salvar(nome_script, str(id_parlamentar))
             time.sleep(0.5)
 
-    chk_manager.salvar(nome_script, "CONCLUIDO_" + datetime.now().strftime('%Y-%m-%d'))
-    logger.info("=== Sincronização de Órgãos e Membros da Câmara FINALIZADA ===")
-    
+    if sucesso_total:
+        chk_manager.concluir(nome_script)
+        logger.info("=== Sincronização de Órgãos e Membros da Câmara FINALIZADA ===")
+    else:
+        logger.warning("Sincronização terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
+
     cursor.close()
     conexao.close()
+    return sucesso_total
 
 if __name__ == "__main__":
-    processar_orgaos_camara()
+    if not processar_orgaos_camara():
+        sys.exit(1)

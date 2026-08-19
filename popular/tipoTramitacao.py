@@ -15,7 +15,9 @@ chk_manager = CheckpointManager(db)
 script_checkpoint = "popular/tipo_tramitacao.py#camara"
 
 def importar_tipo_tramitacao():
-    cursor.execute("SELECT idProposicao, idApi FROM proposicao WHERE idApi IS NOT NULL ORDER BY idProposicao ASC")
+    # Apenas proposições da Câmara: este script consulta a API da Câmara, e os
+    # codigoMateria do Senado poderiam colidir com ids de proposições da Câmara.
+    cursor.execute("SELECT idProposicao, idApi FROM proposicao WHERE casa = 'Camara' AND idApi IS NOT NULL ORDER BY idProposicao ASC")
     proposicoes_banco = cursor.fetchall()
     
     checkpoint_atual = int(chk_manager.obter(script_checkpoint, default_value="0"))

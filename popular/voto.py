@@ -68,20 +68,22 @@ def importar_votos_camara():
                     if id_dep_api in map_parlamentares:
                         voto_txt = v.get("tipoVoto", "").strip().lower()
                         
-                        if voto_txt == "sim": 
+                        if voto_txt == "sim":
                             voto_enum = "SIM"
-                        elif voto_txt in ["não", "nao"]: 
+                        elif voto_txt in ["não", "nao"]:
                             voto_enum = "NAO"
-                        elif "absten" in voto_txt: 
+                        elif "absten" in voto_txt:
                             voto_enum = "ABSTENCAO"
+                        elif "obstru" in voto_txt:
+                            voto_enum = "OBSTRUCAO"
                         elif any(palavra in voto_txt for palavra in ["justificad", "licença", "missão", "afastament"]):
                             # Cobre casos raros mas possíveis de "Ausência Justificada", "Licença Médica", etc. na Camara
                             voto_enum = "AUSENCIA JUSTIFICADA"
                         elif voto_txt == "ausente" or "ausência" in voto_txt:
                             voto_enum = "AUSENTE"
-                        else: 
-                            # Cobre coisas como "Obstrução", "Artigo 17", "Branco", Votações Secretas
-                            voto_enum = "SEM REGISTRO"
+                        else:
+                            # Cobre coisas como "Artigo 17", "Branco", Votações Secretas
+                            voto_enum = "NAO REGISTRADO"
 
                         id_api_voto = f"{id_api_votacao}_{id_dep_api}"
                         batch.append((map_parlamentares[id_dep_api], id_votacao, id_api_voto, voto_enum))

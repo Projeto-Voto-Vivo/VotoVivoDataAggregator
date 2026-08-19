@@ -1,6 +1,6 @@
+import sys
 import time
 import xml.etree.ElementTree as ET
-from datetime import datetime
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
@@ -84,8 +84,13 @@ def buscar_detalhes_senador(id_api):
 def processar_senado():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
-    nome_script = "parlamentar_senado_v1"
-    
+    nome_script = "parlamentar_senado_v2"
+
+    # A lista da API tem ordem estável, então o índice serve de cursor para
+    # retomar uma carga interrompida no mesmo dia.
+    progresso = chk_manager.obter(nome_script, "INDEX_0", reiniciar_se_concluido=True)
+    indice_inicial = int(progresso.rsplit("_", 1)[-1]) if progresso.startswith("INDEX_") else 0
+
     senadores_elementos = buscar_senadores_lista()
     total = len(senadores_elementos)
     afastados_senado = buscar_afastados_senado()
@@ -105,6 +110,9 @@ def processar_senado():
     sucesso_total = True
 
     for i, parlamentar_xml in enumerate(senadores_elementos, 1):
+        if i <= indice_inicial:
+            continue
+
         # 1. Dados Básicos vindos da Lista Principal
         id_api = get_xml_text(parlamentar_xml, 'CodigoParlamentar')
         nome_urna = get_xml_text(parlamentar_xml, 'NomeParlamentar')
@@ -142,9 +150,10 @@ def processar_senado():
             cursor.execute(sql_parlamentar, valores)
             conexao.commit()
             
-            # Checkpoint a cada 20 senadores
-            if i % 20 == 0:
-                chk_manager.salvar(nome_script, f"PROCESSADO_ATE_INDEX_{i}")
+            # Checkpoint a cada 20 senadores, mas só enquanto nenhum falhou —
+            # a retomada recomeça no primeiro que deu erro.
+            if i % 20 == 0 and sucesso_total:
+                chk_manager.salvar(nome_script, f"INDEX_{i}")
                 
         except Exception as e:
             conexao.rollback()
@@ -154,15 +163,16 @@ def processar_senado():
         time.sleep(0.1) # Respeitar limites da API do Senado
 
     if sucesso_total:
-        data_hoje = datetime.now().strftime('%Y-%m-%d')
-        chk_manager.salvar(nome_script, f"CONCLUIDO_{data_hoje}")
+        chk_manager.concluir(nome_script)
         logger.info("Sincronização do Senado finalizada com SUCESSO!")
     else:
-        logger.warning("Sincronização finalizada, mas com alguns erros. Verifique os logs.")
+        logger.warning("Sincronização finalizada com erros; checkpoint preservado para retomada. Execute novamente.")
 
     cursor.close()
     conexao.close()
+    return sucesso_total
 
 if __name__ == "__main__":
     logger.info("=== INICIANDO SCRIPT DE CARGA: SENADO FEDERAL ===")
-    processar_senado()
+    if not processar_senado():
+        sys.exit(1)

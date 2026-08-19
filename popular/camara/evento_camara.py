@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import mysql.connector
 from datetime import datetime
@@ -33,24 +34,25 @@ def processar_eventos_presencas_camara():
     conexao, cursor = get_connection(dictionary=True)
     chk_manager = CheckpointManager(conexao)
     
-    nome_script = "evento_presenca_camara"
-    
+    nome_script = "evento_presenca_camara_v2"
+
     cursor.execute("INSERT IGNORE INTO orgao (idApi, sigla, nome, tipoOrgao, casa) VALUES ('114', 'PLEN', 'Plenário da Câmara dos Deputados', 'Plenário', 'Camara')")
-    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '114'")
+    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '114' AND casa = 'Camara'")
     id_plenario_camara = cursor.fetchone()['idOrgao']
 
     cursor.execute("INSERT IGNORE INTO orgao (idApi, sigla, nome, tipoOrgao, casa) VALUES ('111', 'CN', 'Congresso Nacional', 'Plenário', 'Congresso')")
-    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '111'")
+    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '111' AND casa = 'Congresso'")
     id_plenario_congresso = cursor.fetchone()['idOrgao']
     
     cursor.execute("SELECT idOrgao, nome FROM orgao WHERE casa = 'Camara'")
     map_orgaos = {row['nome'].lower().strip(): row['idOrgao'] for row in cursor.fetchall() if row['nome']}
     conexao.commit()
 
-    cursor.execute("SELECT idParlamentar, idApi, nomeUrna FROM parlamentar WHERE cargo = 'Deputado(a)'")
+    cursor.execute("SELECT idParlamentar, idApi, nomeUrna FROM parlamentar WHERE cargo = 'Deputado(a)' ORDER BY idParlamentar ASC")
     deputados = cursor.fetchall()
     total_deps = len(deputados)
-    ultimo_processado = chk_manager.obter(nome_script, "0")
+    ultimo_processado = int(chk_manager.obter(nome_script, "0", reiniciar_se_concluido=True))
+    sucesso_total = True
     
     ano_inicio = int(os.getenv("ANO_INICIO_ETL", "2023"))
     ano_atual = datetime.now().year
@@ -73,10 +75,11 @@ def processar_eventos_presencas_camara():
         id_parlamentar = dep['idParlamentar']
         id_api = str(dep['idApi'])
         nome_urna = dep['nomeUrna']
-        
-        if id_api <= ultimo_processado and ultimo_processado != "0":
+
+        if id_parlamentar <= ultimo_processado:
             continue
-            
+
+        sucesso_deputado = True
         logger.info(f"[{i}/{total_deps}] A processar: {nome_urna}...")
         
         for ano in anos_mandato:
@@ -112,6 +115,7 @@ def processar_eventos_presencas_camara():
                             eventos_plenario += 1
                         except Exception as e:
                             logger.error(f"Erro no Plenário: {e}")
+                            sucesso_deputado = False
                 if eventos_plenario > 0: logger.debug(f"   └─ {eventos_plenario} Plenário/Congresso em {ano}.")
                             
             time.sleep(0.3)
@@ -165,19 +169,32 @@ def processar_eventos_presencas_camara():
                                 
                             except mysql.connector.Error as db_err:
                                 logger.error(f"Erro no BD (Comissão {id_evento_api}): {db_err}. Verifique se idOrgao permite NULL!")
+                                sucesso_deputado = False
                             except Exception as e:
                                 logger.error(f"Erro de Parsing (Comissão {data_str}): {e}")
+                                sucesso_deputado = False
                                 
                 if eventos_comissao > 0: logger.info(f"   └─ Inseridas {eventos_comissao} Presenças de Comissões em {ano}.")
             
             conexao.commit()
             time.sleep(0.3)
 
-        chk_manager.salvar(nome_script, id_api)
+        if not sucesso_deputado:
+            sucesso_total = False
 
-    chk_manager.salvar(nome_script, "CONCLUIDO_" + datetime.now().strftime('%Y-%m-%d'))
+        if sucesso_total:
+            chk_manager.salvar(nome_script, str(id_parlamentar))
+
+    if sucesso_total:
+        chk_manager.concluir(nome_script)
+        logger.info("=== ETL de Eventos e Presenças da Câmara FINALIZADO com sucesso ===")
+    else:
+        logger.warning("ETL terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
+
     cursor.close()
     conexao.close()
+    return sucesso_total
 
 if __name__ == "__main__":
-    processar_eventos_presencas_camara()
+    if not processar_eventos_presencas_camara():
+        sys.exit(1)

@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 from datetime import datetime
 from utils.http_client import http_client
@@ -73,7 +74,10 @@ def sincronizar_temas(conexao):
 # 3. LÓGICA DE EXTRAÇÃO E INSERÇÃO
 # ---------------------------------------------------------
 def obter_senadores_ativos(cursor):
-    cursor.execute("SELECT idParlamentar, idApi, nomeUrna FROM parlamentar WHERE cargo = 'Senador(a)'")
+    cursor.execute("""
+        SELECT idParlamentar, idApi, nomeUrna FROM parlamentar
+        WHERE cargo = 'Senador(a)' ORDER BY idParlamentar ASC
+    """)
     return cursor.fetchall()
 
 def buscar_detalhes_processo_senado(id_processo_api):
@@ -99,25 +103,25 @@ def extrair_autores_senado(detalhes):
 def processar_proposicoes_senado():
     conexao, cursor = get_connection()
     chk_manager = CheckpointManager(conexao)
-    nome_script = "proposicao_senado_v1"
-    
+    nome_script = "proposicao_senado_v2"
+
     map_tipos = sincronizar_tipos_proposicao(conexao)
     map_temas = sincronizar_temas(conexao)
-    
+
     senadores = obter_senadores_ativos(cursor)
     total_senadores = len(senadores)
-    ultimo_senador_processado = chk_manager.obter(nome_script, "0")
+    ultimo_processado = int(chk_manager.obter(nome_script, "0", reiniciar_se_concluido=True))
     mapa_parlamentares_senado = {str(id_api): id_parl for id_parl, id_api, _ in senadores}
-    
+
     sql_proposicao = """
-        INSERT INTO proposicao (idApi, idTipoProposicao, numero, ano, ementa, statusAtual, dataApresentacao)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO proposicao (idApi, casa, idTipoProposicao, numero, ano, ementa, statusAtual, dataApresentacao)
+        VALUES (%s, 'Senado', %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
-        idTipoProposicao=VALUES(idTipoProposicao), numero=VALUES(numero), 
+        idTipoProposicao=VALUES(idTipoProposicao), numero=VALUES(numero),
         ano=VALUES(ano), ementa=VALUES(ementa), statusAtual=VALUES(statusAtual),
         dataApresentacao=VALUES(dataApresentacao)
     """
-    sql_get_prop_id = "SELECT idProposicao FROM proposicao WHERE idApi = %s"
+    sql_get_prop_id = "SELECT idProposicao FROM proposicao WHERE idApi = %s AND casa = 'Senado'"
     sql_autoria = "INSERT IGNORE INTO autoriaProposicao (idParlamentar, idProposicao) VALUES (%s, %s)"
     sql_vincular_tema = "INSERT IGNORE INTO temaProposicao (idProposicao, idTema) VALUES (%s, %s)"
 
@@ -126,11 +130,12 @@ def processar_proposicoes_senado():
     anos_mandato = list(range(ano_inicio, ano_atual + 1))
 
     proposicoes_processadas = set()
+    sucesso_total = True
 
-    for i, (_, id_api_senador, nome_urna) in enumerate(senadores, 1):
-        if str(id_api_senador) <= ultimo_senador_processado and ultimo_senador_processado != "0":
+    for i, (id_parlamentar, id_api_senador, nome_urna) in enumerate(senadores, 1):
+        if id_parlamentar <= ultimo_processado:
             continue
-            
+
         logger.info(f"[{i}/{total_senadores}] Buscando proposições de: {nome_urna}")
         sucesso_senador = True
         
@@ -204,13 +209,23 @@ def processar_proposicoes_senado():
 
                 time.sleep(0.3)
                 
-        if sucesso_senador:
-            chk_manager.salvar(nome_script, str(id_api_senador))
+        if not sucesso_senador:
+            sucesso_total = False
+
+        if sucesso_total:
+            chk_manager.salvar(nome_script, str(id_parlamentar))
             time.sleep(1)
 
-    chk_manager.salvar(nome_script, "CONCLUIDO_" + datetime.now().strftime('%Y-%m-%d'))
+    if sucesso_total:
+        chk_manager.concluir(nome_script)
+        logger.info("Proposições do Senado sincronizadas com SUCESSO.")
+    else:
+        logger.warning("Sincronização terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
+
     cursor.close()
     conexao.close()
+    return sucesso_total
 
 if __name__ == "__main__":
-    processar_proposicoes_senado()
+    if not processar_proposicoes_senado():
+        sys.exit(1)

@@ -46,6 +46,14 @@ Execute o schema para criar as tabelas antes de rodar qualquer script:
 mysql -u <usuario> -p < popular/schema.sql
 ```
 
+### Migrações
+
+Bancos criados com uma versão anterior do `schema.sql` devem aplicar as migrações de `popular/migrations/` (em ordem cronológica):
+
+```bash
+mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade.sql
+```
+
 ### Banco de testes
 
 Cria o schema e executa todos os scripts com `TEST_MODE=True`, gerando um dataset reduzido para desenvolvimento:
@@ -115,6 +123,12 @@ Toda a lógica repetida entre scripts vive em `utils/`, em vez de duplicada em c
 ## Checkpoints
 
 Os scripts de longa duração utilizam um sistema de checkpoints (`utils/checkpoint_manager.py`) para tolerar interrupções. O progresso é salvo na tabela `etlCheckpoint` do banco de dados após cada lote processado, permitindo que o script seja reiniciado do ponto onde parou sem reprocessar registros já importados.
+
+A tabela guarda duas informações separadas: o **cursor** de progresso (`ultimoParametro`) e o **estado** (`status`, `EM_PROGRESSO` ou `CONCLUIDO`):
+
+- Se um script falha no meio (erro de rede, `RateLimitAbort`, Ctrl+C), o estado fica `EM_PROGRESSO` e a próxima execução retoma exatamente do primeiro item que falhou.
+- Se um script termina com falhas parciais, ele sai com código ≠ 0 (o `principal.py` interrompe o pipeline) e o cursor fica parado no último item bem-sucedido — basta rodar de novo.
+- Se um script já `CONCLUIDO` for reexecutado, ele recomeça do zero como um *refresh* completo (seguro, pois as cargas são upserts idempotentes).
 
 Para forçar a reexecução completa de um script, apague o checkpoint correspondente antes de rodá-lo:
 

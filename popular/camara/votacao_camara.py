@@ -49,8 +49,7 @@ def importar_votacoes_camara():
 
     cursor.execute("""
         SELECT p.idApi, p.idProposicao FROM proposicao p
-        JOIN tipoProposicao t ON p.idTipoProposicao = t.idTipoProposicao
-        WHERE t.casa = 'Camara' AND p.idApi IS NOT NULL
+        WHERE p.casa = 'Camara' AND p.idApi IS NOT NULL
     """)
     map_proposicoes = {str(row[0]): row[1] for row in cursor.fetchall()}
     logger.info(f"Carregadas {len(map_proposicoes)} proposições para mapeamento (Câmara).")
@@ -109,7 +108,8 @@ def importar_votacoes_camara():
                             v_detalhe = res_detalhe.json().get("dados", {})
 
                             id_proposicao = None
-                            elementos_afetados = v_detalhe.get("proposicoesAfetadas", []) + v_detalhe.get("objetosPossiveis", [])
+                            # "or []" porque a API pode devolver a chave com valor null
+                            elementos_afetados = (v_detalhe.get("proposicoesAfetadas") or []) + (v_detalhe.get("objetosPossiveis") or [])
                             for p in elementos_afetados:
                                 if p.get("id"):
                                     id_api_verificar = str(p.get("id"))

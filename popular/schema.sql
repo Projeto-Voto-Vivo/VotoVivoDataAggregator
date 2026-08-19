@@ -5,14 +5,16 @@ CREATE TABLE etlCheckpoint (
     idEtlCheckpoint INT AUTO_INCREMENT PRIMARY KEY,
     nomeScript VARCHAR(100) UNIQUE NOT NULL,
     ultimoParametro VARCHAR(255) NOT NULL,
+    status ENUM('EM_PROGRESSO', 'CONCLUIDO') NOT NULL DEFAULT 'EM_PROGRESSO',
     dataAtualizacao DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_etl_checkpoint_script (nomeScript)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE parlamentar (
     idParlamentar INT AUTO_INCREMENT PRIMARY KEY,
-    idApi VARCHAR(50) UNIQUE NOT NULL,
+    idApi VARCHAR(50) NOT NULL,
     cargo VARCHAR(50),
+    UNIQUE KEY unique_parlamentar_api (idApi, cargo),
     nomeCivil VARCHAR(255),
     nomeUrna VARCHAR(255),
     partidoAtual VARCHAR(50),
@@ -35,8 +37,10 @@ CREATE TABLE tipoProposicao (
 
 CREATE TABLE proposicao (
     idProposicao INT AUTO_INCREMENT PRIMARY KEY,
-    idApi VARCHAR(50) UNIQUE NOT NULL,
+    idApi VARCHAR(50) NOT NULL,
+    casa ENUM('Camara', 'Senado', 'Congresso') NULL,
     idTipoProposicao INT,
+    UNIQUE KEY unique_proposicao_api (idApi, casa),
     numero VARCHAR(20),
     ano INT,
     ementa TEXT,
@@ -68,11 +72,12 @@ CREATE TABLE temaProposicao (
 
 CREATE TABLE orgao (
     idOrgao INT AUTO_INCREMENT PRIMARY KEY,
-    idApi VARCHAR(50) UNIQUE NOT NULL,
+    idApi VARCHAR(50) NOT NULL,
     sigla VARCHAR(50),
     nome VARCHAR(500),
     casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL,
-	  tipoOrgao VARCHAR(100) NULL
+    tipoOrgao VARCHAR(100) NULL,
+    UNIQUE KEY unique_orgao_api (idApi, casa)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE membroOrgao (
@@ -126,7 +131,7 @@ CREATE TABLE voto (
     idParlamentar INT NOT NULL,
     idVotacao INT NOT NULL,
     idApi VARCHAR(50) UNIQUE NOT NULL,
-    votoRegistrado ENUM('SIM', 'NAO', 'ABSTENCAO', 'OBSTRUCAO', 'NAO REGISTRADO') NOT NULL,
+    votoRegistrado ENUM('SIM', 'NAO', 'ABSTENCAO', 'OBSTRUCAO', 'AUSENCIA JUSTIFICADA', 'AUSENTE', 'NAO REGISTRADO') NOT NULL,
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
         ON DELETE CASCADE,
