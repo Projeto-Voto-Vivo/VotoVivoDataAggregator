@@ -1,88 +1,91 @@
+"""Importa o catálogo de partidos (API da Câmara) para a tabela `partido`.
+
+Serve de referência para filtros/comparações por partido e para o histórico de
+filiações (filiacaoPartidaria referencia a sigla).
+"""
+
+import sys
+import time
+
 from utils.http_client import http_client
 from utils.db import get_connection
-import time
-import os
+from utils.execucao import ExecucaoEtl
+from utils.logging_config import get_logger
 
-is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
-tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
+logger = get_logger("ETL_Partidos")
 
-db, cursor = get_connection()
+BASE_URL = "https://dadosabertos.camara.leg.br/api/v2"
 
-print("=" * 80)
-print(" IMPORTAÇÃO DE PARTIDOS")
-print("=" * 80)
 
-url_partidos = "https://dadosabertos.camara.leg.br/api/v2/partidos"
-params = {
-    "itens": 100,
-    "ordem": "ASC",
-    "ordenarPor": "sigla"
-}
+def importar_partidos():
+    db, cursor = get_connection()
+    execucao = ExecucaoEtl(db, "popular/partidos.py")
+    sucesso_total = True
+    total = 0
 
-total_partidos = 0
+    sql = """
+        INSERT INTO partido (idApi, sigla, nome, urlLogo)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE idApi = VALUES(idApi), nome = VALUES(nome), urlLogo = VALUES(urlLogo)
+    """
 
-try:
-    print("\n Buscando lista de partidos na API...\n")
-    
-    response = http_client.get_safe(url_partidos, params=params)
-    
-    if response.status_code == 200:
-        partidos = response.json()["dados"]
+    try:
+        pagina = 1
+        while True:
+            resp = http_client.get_safe(
+                f"{BASE_URL}/partidos",
+                params={"itens": 100, "pagina": pagina, "ordem": "ASC", "ordenarPor": "sigla"},
+                headers={"accept": "application/json"},
+            )
+            if resp.status_code != 200:
+                logger.error(f"Erro ao listar partidos (HTTP {resp.status_code})")
+                sucesso_total = False
+                break
 
-        if is_test_mode:
-            partidos = partidos[:5]
-            print("[MODO TESTE] Limitando a 5 partidos.")
+            partidos = resp.json().get("dados", [])
+            if not partidos:
+                break
 
-        print(f" Encontrados {len(partidos)} partidos\n")
+            for p in partidos:
+                id_api = p.get("id")
+                detalhe = {}
+                resp_detalhe = http_client.get_safe(f"{BASE_URL}/partidos/{id_api}", headers={"accept": "application/json"})
+                if resp_detalhe.status_code == 200:
+                    detalhe = resp_detalhe.json().get("dados", {})
 
-        start_time = time.time()
-        for partido in partidos:
-            id_partido_api = partido.get('id')
-            
-          
-            url_detalhe = f"https://dadosabertos.camara.leg.br/api/v2/partidos/{id_partido_api}"
-            response_detalhe = http_client.get_safe(url_detalhe)
-            
-            if response_detalhe.status_code == 200:
-                detalhe = response_detalhe.json()["dados"]
-                
-                sql = """
-                    INSERT IGNORE INTO Partido
-                    (siglaPartido, uriPartido, nome)
-                    VALUES (%s, %s, %s)
-                """
-                
-                valores = (
-                    detalhe.get('sigla'),
-                    detalhe.get('uri'),
-                    detalhe.get('nome')
-                )
-                
-                cursor.execute(sql, valores)
-                db.commit()
-                total_partidos += 1
-                
-                sigla = detalhe.get('sigla') or 'N/A'
-                nome = detalhe.get('nome') or 'Sem nome'
-                print(f"✔ [{total_partidos:2d}] {sigla:15s} - {nome}")
-                
+                sigla = detalhe.get("sigla") or p.get("sigla")
+                if not sigla:
+                    continue
+
+                cursor.execute(sql, (
+                    str(id_api) if id_api else None,
+                    sigla,
+                    detalhe.get("nome") or p.get("nome"),
+                    detalhe.get("urlLogo"),
+                ))
+                total += 1
+                logger.info(f"[{total}] {sigla} — {detalhe.get('nome') or p.get('nome')}")
                 time.sleep(0.1)
 
-                if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
-                    print(f"\n[LIMITE DE TEMPO] Interrompido após {tempo_limite_segundos}s.")
-                    break
-            else:
-                print(f" Erro ao buscar detalhes do partido ID {id_partido_api}")
-        
-        print("\n" + "=" * 80)
-        print(f" Importação concluída!")
-        print(f"   Total de partidos importados: {total_partidos}")
-        print("=" * 80)
-    else:
-        print(f" Erro ao buscar partidos: Status {response.status_code}")
+            db.commit()
+            pagina += 1
 
-except Exception as e:
-    print(f" Erro durante a importação: {e}")
+        db.commit()
+        execucao.incrementar(processados=total, registros=total)
+        execucao.finalizar("SUCESSO" if sucesso_total else "FALHA")
+        logger.info(f"Importação de partidos concluída: {total} registros.")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Erro durante a importação de partidos: {e}")
+        execucao.finalizar("FALHA", str(e))
+        sucesso_total = False
+    finally:
+        cursor.close()
+        db.close()
 
-cursor.close()
-db.close()
+    return sucesso_total
+
+
+if __name__ == "__main__":
+    if not importar_partidos():
+        sys.exit(1)

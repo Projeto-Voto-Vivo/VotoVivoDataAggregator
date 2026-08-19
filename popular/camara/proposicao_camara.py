@@ -148,6 +148,10 @@ def processar_proposicoes_camara():
     """
     sql_autoria = "INSERT IGNORE INTO autoriaProposicao (idParlamentar, idProposicao) VALUES (%s, %s)"
     sql_vincular_tema = "INSERT IGNORE INTO temaProposicao (idProposicao, idTema) VALUES (%s, %s)"
+    sql_relacao = "INSERT IGNORE INTO proposicaoRelacao (idProposicao, idProposicaoRelacionada, tipoRelacao) VALUES (%s, %s, %s)"
+
+    relacoes_pendentes = []
+    CAMPOS_RELACAO = (('uriPropPrincipal', 'PRINCIPAL'), ('uriPropAnterior', 'ANTERIOR'), ('uriPropPosterior', 'POSTERIOR'))
 
     sucesso_total = True
     interrompido = False
@@ -182,12 +186,31 @@ def processar_proposicoes_camara():
                     id_prop_api, map_tipos.get(p.get('siglaTipo')), p.get('numero'),
                     p.get('ano'), p.get('ementa'), status_atual, data_apresentacao,
                 ))
+
+                for campo, tipo_relacao in CAMPOS_RELACAO:
+                    id_relacionada = extrair_id_da_uri(p.get(campo))
+                    if id_relacionada:
+                        relacoes_pendentes.append((id_prop_api, id_relacionada, tipo_relacao))
             gravadas = executar_em_lotes(conexao, cursor, sql_proposicao, linhas)
             logger.info(f"   └─ {gravadas} proposições gravadas/atualizadas.")
 
             # Mapa idApi -> idProposicao, necessário para autores e temas
             cursor.execute("SELECT idApi, idProposicao FROM proposicao WHERE casa = 'Camara'")
             map_proposicoes = {str(r[0]): r[1] for r in cursor.fetchall()}
+
+            # Grava as relações cujas duas pontas já existem na base; o restante
+            # continua pendente (pode resolver num ano posterior).
+            resolvidas, ainda_pendentes = [], []
+            for id_a, id_b, tipo_relacao in relacoes_pendentes:
+                interno_a, interno_b = map_proposicoes.get(id_a), map_proposicoes.get(id_b)
+                if interno_a and interno_b:
+                    resolvidas.append((interno_a, interno_b, tipo_relacao))
+                else:
+                    ainda_pendentes.append((id_a, id_b, tipo_relacao))
+            relacoes_pendentes = ainda_pendentes
+            if resolvidas:
+                total_relacoes = executar_em_lotes(conexao, cursor, sql_relacao, resolvidas)
+                logger.info(f"   └─ {total_relacoes} relações entre proposições gravadas.")
 
             # 2. Autores — vincula os deputados presentes na base
             autores = baixar_dump_anual("proposicoesAutores", ano, ano_atual)
@@ -240,6 +263,9 @@ def processar_proposicoes_camara():
             execucao.incrementar(erros=1)
             sucesso_total = False
             break
+
+    if relacoes_pendentes:
+        logger.info(f"{len(relacoes_pendentes)} relações apontam para proposições fora da base (anteriores à janela) e foram ignoradas.")
 
     if sucesso_total and not interrompido:
         # Reposiciona o cursor para que a próxima execução faça apenas o

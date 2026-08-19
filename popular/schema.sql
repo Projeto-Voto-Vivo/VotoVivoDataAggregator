@@ -54,6 +54,34 @@ CREATE TABLE parlamentar (
     condicao_mandato VARCHAR(50) DEFAULT 'Titular'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE partido (
+    idPartido INT AUTO_INCREMENT PRIMARY KEY,
+    idApi VARCHAR(50) NULL,
+    sigla VARCHAR(50) UNIQUE NOT NULL,
+    nome VARCHAR(255),
+    urlLogo VARCHAR(500) NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE filiacaoPartidaria (
+    idFiliacao INT AUTO_INCREMENT PRIMARY KEY,
+    idParlamentar INT NOT NULL,
+    siglaPartido VARCHAR(50) NOT NULL,
+    dataInicio DATE NULL,
+    dataFim DATE NULL,
+    FOREIGN KEY (idParlamentar) REFERENCES parlamentar(idParlamentar) ON DELETE CASCADE,
+    UNIQUE KEY unique_filiacao (idParlamentar, siglaPartido, dataInicio)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE mandatoExercicio (
+    idMandatoExercicio INT AUTO_INCREMENT PRIMARY KEY,
+    idParlamentar INT NOT NULL,
+    dataInicio DATE NOT NULL,
+    dataFim DATE NULL,
+    descricaoParticipacao VARCHAR(100) NULL,
+    FOREIGN KEY (idParlamentar) REFERENCES parlamentar(idParlamentar) ON DELETE CASCADE,
+    UNIQUE KEY unique_exercicio (idParlamentar, dataInicio)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE tipoProposicao (
     idTipoProposicao INT AUTO_INCREMENT PRIMARY KEY,
     sigla VARCHAR(10) NOT NULL,
@@ -153,6 +181,17 @@ CREATE TABLE votacao (
         ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Orientação das bancadas/lideranças em cada votação da Câmara (fonte: dump
+-- votacoesOrientacoes-{ano}.json). Permite responder "o parlamentar seguiu o partido?".
+CREATE TABLE orientacaoVotacao (
+    idOrientacaoVotacao INT AUTO_INCREMENT PRIMARY KEY,
+    idVotacao INT NOT NULL,
+    siglaBancada VARCHAR(100) NOT NULL,
+    orientacao VARCHAR(50) NULL,
+    FOREIGN KEY (idVotacao) REFERENCES votacao(idVotacao) ON DELETE CASCADE,
+    UNIQUE KEY unique_orientacao_votacao (idVotacao, siglaBancada)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE voto (
     idVoto INT AUTO_INCREMENT PRIMARY KEY,
     idParlamentar INT NOT NULL,
@@ -177,6 +216,19 @@ CREATE TABLE autoriaProposicao (
     FOREIGN KEY (idProposicao)
         REFERENCES proposicao(idProposicao)
         ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Relações entre proposições: apensamentos/encadeamentos dentro da Câmara
+-- (PRINCIPAL/ANTERIOR/POSTERIOR, dos dumps anuais) e a correspondência da mesma
+-- matéria entre as casas (MESMA_MATERIA, por sigla+número+ano unificados).
+CREATE TABLE proposicaoRelacao (
+    idProposicaoRelacao INT AUTO_INCREMENT PRIMARY KEY,
+    idProposicao INT NOT NULL,
+    idProposicaoRelacionada INT NOT NULL,
+    tipoRelacao ENUM('PRINCIPAL', 'ANTERIOR', 'POSTERIOR', 'MESMA_MATERIA') NOT NULL,
+    FOREIGN KEY (idProposicao) REFERENCES proposicao(idProposicao) ON DELETE CASCADE,
+    FOREIGN KEY (idProposicaoRelacionada) REFERENCES proposicao(idProposicao) ON DELETE CASCADE,
+    UNIQUE KEY unique_proposicao_relacao (idProposicao, idProposicaoRelacionada, tipoRelacao)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE redeSocial (

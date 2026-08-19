@@ -9,6 +9,9 @@ from utils.checkpoint_manager import CheckpointManager
 PIPELINE_SCRIPTS = [
     "camara/parlamentar_camara.py",
     "senado/parlamentar_senado.py",
+    "partidos.py",
+    "camara/historico_parlamentar_camara.py",
+    "senado/mandato_senado.py",
     "tipoProposicao.py",
     "camara/tema_camara.py",
     "senado/tema_senado.py",
@@ -16,6 +19,7 @@ PIPELINE_SCRIPTS = [
     "senado/orgao_senado.py",
     "camara/proposicao_camara.py",
     "senado/proposicao_senado.py",
+    "relacionarProposicaoCasas.py",
     "camara/despesas_camara.py",
     "senado/despesas_senado.py",
     "emenda.py",
@@ -25,6 +29,7 @@ PIPELINE_SCRIPTS = [
     "camara/evento_camara.py",
     "senado/votacao_presenca_senado.py",
     "camara/votacao_camara.py",
+    "camara/orientacao_camara.py",
     "voto.py",
     "relacionarEmendaParlamentar.py",
 ]

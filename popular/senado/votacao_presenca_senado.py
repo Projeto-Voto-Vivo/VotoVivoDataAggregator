@@ -155,13 +155,29 @@ def processar_votacoes_presencas_senado():
     # em 2025 apareceria "ausente" em todas as sessões de 2023.
     exercicios_senadores = {}
     if proposicoes:
-        logger.info("A carregar períodos de exercício dos senadores...")
-        for id_api_sen in map_senadores:
-            periodos = buscar_exercicios_senador(id_api_sen)
-            if periodos is None:
-                logger.warning(f"Sem dados de exercício para o senador {id_api_sen}; ele não será marcado como ausente.")
-            exercicios_senadores[id_api_sen] = periodos
-            time.sleep(0.1)
+        # Preferência: períodos persistidos por senado/mandato_senado.py; a API
+        # só é consultada como fallback quando a tabela ainda está vazia.
+        cursor.execute("""
+            SELECT p.idApi, me.dataInicio, me.dataFim
+            FROM mandatoExercicio me
+            JOIN parlamentar p ON p.idParlamentar = me.idParlamentar
+            WHERE p.cargo = 'Senador(a)'
+        """)
+        for row in cursor.fetchall():
+            chave = str(row['idApi'])
+            fim = str(row['dataFim']) if row['dataFim'] else None
+            exercicios_senadores.setdefault(chave, []).append((str(row['dataInicio']), fim))
+
+        if exercicios_senadores:
+            logger.info(f"Períodos de exercício carregados do banco para {len(exercicios_senadores)} senadores.")
+        else:
+            logger.warning("Tabela mandatoExercicio vazia; buscando exercícios na API (rode senado/mandato_senado.py antes para evitar isso).")
+            for id_api_sen in map_senadores:
+                periodos = buscar_exercicios_senador(id_api_sen)
+                if periodos is None:
+                    logger.warning(f"Sem dados de exercício para o senador {id_api_sen}; ele não será marcado como ausente.")
+                exercicios_senadores[id_api_sen] = periodos
+                time.sleep(0.1)
 
     def em_exercicio(id_api_sen, data_sessao):
         """Sem dados de exercício ou de data, devolve False — nunca marcar

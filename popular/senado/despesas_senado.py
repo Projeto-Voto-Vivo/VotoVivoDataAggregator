@@ -13,8 +13,8 @@ print("[+] Conexão com o banco de dados estabelecida.\n")
 
 chk_manager = CheckpointManager(db)
 
-ANO_INICIO = int(os.getenv("ANO_INICIO_ETL", 2025))
-MES_INICIO = int(os.getenv("MES_INICIO_ETL", 5))
+ANO_INICIO = int(os.getenv("ANO_INICIO_ETL", 2023))
+MES_INICIO = int(os.getenv("MES_INICIO_ETL", 1))
 ANO_ATUAL = datetime.now().year
 MES_ATUAL = datetime.now().month
 

@@ -59,8 +59,8 @@ headers = {
     "Accept": "application/json"
 }
 
-ANO_INICIO = int(os.getenv("ANO_INICIO_ETL", 2025))
-MES_INICIO = int(os.getenv("MES_INICIO_ETL", 5))
+ANO_INICIO = int(os.getenv("ANO_INICIO_ETL", 2023))
+MES_INICIO = int(os.getenv("MES_INICIO_ETL", 1))
 ANO_ATUAL = datetime.now().year
 MES_ATUAL = datetime.now().month
 
@@ -150,10 +150,6 @@ try:
                                     continue
                                 
                                 documentos_validos.append((documento, data_doc))
-
-                    if not documentos_validos and ano in ANOS_ESCOPO:
-                        if ano == ANO_INICIO:
-                            continue
 
                     garantir_conexao(db)
                     if db.in_transaction:

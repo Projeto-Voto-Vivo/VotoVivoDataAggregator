@@ -54,6 +54,7 @@ Bancos criados com uma versão anterior do `schema.sql` devem aplicar as migraç
 mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade_parte2.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_metricas.sql
+mysql -u <usuario> -p < popular/migrations/2026-08-19_dados_mandato.sql
 ```
 
 ### Banco de testes
@@ -83,24 +84,29 @@ python popular/principal.py
 |-------|------------------------------------------|--------------------------------------|-------------------------------------------------------------------------------------------------------|
 | 1     | `camara/parlamentar_camara.py`           | —                                    | Importa deputados, gabinete, redes sociais e condição de mandato (Titular/Suplente/Afastado)          |
 | 2     | `senado/parlamentar_senado.py`           | —                                    | Importa senadores e condição de mandato                                                               |
-| 3     | `tipoProposicao.py`                      | —                                    | Importa os tipos de proposição (PL, PEC, MPV…)                                                        |
-| 4     | `camara/tema_camara.py`                  | —                                    | Importa o catálogo de temas da Câmara                                                                 |
-| 5     | `senado/tema_senado.py`                  | —                                    | Importa os assuntos do Senado                                                                         |
-| 6     | `camara/orgao_camara.py`                 | `camara/parlamentar_camara.py`       | Importa órgãos/comissões da Câmara e a relação de membros                                             |
-| 7     | `senado/orgao_senado.py`                 | `senado/parlamentar_senado.py`       | Importa órgãos/comissões do Senado e a relação de membros                                             |
-| 8     | `camara/proposicao_camara.py`            | `tipoProposicao`, `parlamentar_camara` | Importa proposições da Câmara a partir dos **dumps anuais** oficiais (cobertura completa: inclui proposições do Executivo, de comissões e de ex-parlamentares), com autores e temas vinculados |
-| 9     | `senado/proposicao_senado.py`            | `tipoProposicao`, `parlamentar_senado` | Importa proposições do Senado, autores (incluindo coautores) e assuntos vinculados                  |
-| 10    | `camara/despesas_camara.py`              | `camara/parlamentar_camara.py`       | Importa despesas do mandato dos deputados (CEAP/verba de gabinete)                                    |
-| 11    | `senado/despesas_senado.py`              | `senado/parlamentar_senado.py`       | Importa despesas do mandato dos senadores (CEAPS)                                                     |
-| 12    | `emenda.py`                              | —                                    | Emendas parlamentares importadas do Portal da Transparência                                           |
-| 13    | `tipoTramitacao.py`                      | `proposicao_camara`, `proposicao_senado` | Importa os tipos de tramitação a partir do histórico das proposições já importadas                |
-| 14    | `camara/tramitacao_camara.py`            | `proposicao_camara`, `tipoTramitacao` | Importa o histórico de tramitação das proposições da Câmara                                         |
-| 15    | `senado/tramitacao_senado.py`            | `proposicao_senado`, `tipoTramitacao` | Importa o histórico de tramitação das proposições do Senado                                         |
-| 16    | `camara/evento_camara.py`                | `parlamentar_camara`, `orgao_camara` | Importa eventos e presenças em plenário/comissões da Câmara                                           |
-| 17    | `senado/votacao_presenca_senado.py`      | `parlamentar_senado`, `proposicao_senado` | Importa votações nominais, votos e presenças do Senado                                            |
-| 18    | `camara/votacao_camara.py`               | `proposicao_camara`, `orgao_camara`  | Importa votações nominais da Câmara                                                                   |
-| 19    | `voto.py`                                | `camara/votacao_camara.py`, `parlamentar` | Importa os votos individuais de cada deputado                                                    |
-| 20    | `relacionarEmendaParlamentar.py`         | `emenda`, `parlamentar`              | Vincula emendas a parlamentares por correspondência de nome (autor da emenda não vem com FK na API)   |
+| 3     | `partidos.py`                            | —                                    | Importa o catálogo de partidos                                                                        |
+| 4     | `camara/historico_parlamentar_camara.py` | `camara/parlamentar_camara.py`       | Histórico dos deputados: filiações partidárias e períodos de exercício do mandato                     |
+| 5     | `senado/mandato_senado.py`               | `senado/parlamentar_senado.py`       | Mandatos dos senadores: períodos de exercício e filiações partidárias                                 |
+| 6     | `tipoProposicao.py`                      | —                                    | Importa os tipos de proposição (PL, PEC, MPV…)                                                        |
+| 7     | `camara/tema_camara.py`                  | —                                    | Importa o catálogo de temas da Câmara                                                                 |
+| 8     | `senado/tema_senado.py`                  | —                                    | Importa os assuntos do Senado                                                                         |
+| 9     | `camara/orgao_camara.py`                 | `camara/parlamentar_camara.py`       | Importa órgãos/comissões da Câmara e a relação de membros                                             |
+| 10    | `senado/orgao_senado.py`                 | `senado/parlamentar_senado.py`       | Importa órgãos/comissões do Senado e a relação de membros                                             |
+| 11    | `camara/proposicao_camara.py`            | `tipoProposicao`, `parlamentar_camara` | Importa proposições da Câmara a partir dos **dumps anuais** oficiais (cobertura completa: inclui proposições do Executivo, de comissões e de ex-parlamentares), com autores, temas e relações entre proposições (principal/anterior/posterior) |
+| 12    | `senado/proposicao_senado.py`            | `tipoProposicao`, `parlamentar_senado` | Importa **todos** os processos do Senado por ano (universo completo via listagem anual), com autores e assuntos para os de autoria de senador |
+| 13    | `relacionarProposicaoCasas.py`           | `proposicao_camara`, `proposicao_senado` | Vincula a mesma matéria entre Câmara e Senado (numeração unificada) — a jornada bicameral da lei |
+| 14    | `camara/despesas_camara.py`              | `camara/parlamentar_camara.py`       | Importa despesas do mandato dos deputados (CEAP/verba de gabinete)                                    |
+| 15    | `senado/despesas_senado.py`              | `senado/parlamentar_senado.py`       | Importa despesas do mandato dos senadores (CEAPS)                                                     |
+| 16    | `emenda.py`                              | —                                    | Emendas parlamentares importadas do Portal da Transparência                                           |
+| 17    | `tipoTramitacao.py`                      | `proposicao_camara`, `proposicao_senado` | Importa os tipos de tramitação a partir do histórico das proposições já importadas                |
+| 18    | `camara/tramitacao_camara.py`            | `proposicao_camara`, `tipoTramitacao` | Importa o histórico de tramitação das proposições da Câmara                                         |
+| 19    | `senado/tramitacao_senado.py`            | `proposicao_senado`, `tipoTramitacao` | Importa o histórico de tramitação das proposições do Senado                                         |
+| 20    | `camara/evento_camara.py`                | `parlamentar_camara`, `orgao_camara` | Importa eventos e presenças em plenário/comissões da Câmara                                           |
+| 21    | `senado/votacao_presenca_senado.py`      | `parlamentar_senado`, `proposicao_senado`, `mandato_senado` | Importa votações nominais, votos e presenças do Senado (ausência só dentro do exercício do mandato) |
+| 22    | `camara/votacao_camara.py`               | `proposicao_camara`, `orgao_camara`  | Importa votações nominais da Câmara                                                                   |
+| 23    | `camara/orientacao_camara.py`            | `camara/votacao_camara.py`           | Importa a orientação das bancadas em cada votação da Câmara (dumps anuais) — "seguiu o partido?"      |
+| 24    | `voto.py`                                | `camara/votacao_camara.py`, `parlamentar` | Importa os votos individuais de cada deputado                                                    |
+| 25    | `relacionarEmendaParlamentar.py`         | `emenda`, `parlamentar`              | Vincula emendas a parlamentares por correspondência de nome (autor da emenda não vem com FK na API)   |
 
 > Esta é exatamente a ordem usada em `popular/principal.py` (`PIPELINE_SCRIPTS`) e em `popular/seed_teste.py` (`SCRIPTS_ORDEM`) — respeita as dependências entre tabelas (ex.: `tipoTramitacao.py` só roda depois das proposições estarem importadas).
 

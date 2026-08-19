@@ -30,8 +30,8 @@ def obter_ultimo_dia_mes(ano, mes):
     return (date(ano, mes + 1, 1) - timedelta(days=1)).day
 
 def gerar_cronograma_dinamico():
-    ano_inicio = int(os.getenv("ANO_INICIO_ETL", 2025))
-    mes_inicio = int(os.getenv("MES_INICIO_ETL", 5))
+    ano_inicio = int(os.getenv("ANO_INICIO_ETL", 2023))
+    mes_inicio = int(os.getenv("MES_INICIO_ETL", 1))
     ano_atual = datetime.now().year
     mes_atual = datetime.now().month
     cronograma = []
@@ -60,8 +60,8 @@ def importar_votacoes_camara():
 
     cronograma_camara = gerar_cronograma_dinamico()
 
-    ano_inicio_str = os.getenv("ANO_INICIO_ETL", "2025")
-    mes_inicio_str = os.getenv("MES_INICIO_ETL", "5")
+    ano_inicio_str = os.getenv("ANO_INICIO_ETL", "2023")
+    mes_inicio_str = os.getenv("MES_INICIO_ETL", "1")
     checkpoint_atual = chk_manager.obter(script_camara, default_value=f"{ano_inicio_str}_{mes_inicio_str}_1")
     ano_chk, mes_chk, pagina_chk = map(int, checkpoint_atual.split('_'))
 
