@@ -22,7 +22,7 @@ TAMANHO_LOTE = 500
 # 1. FUNÇÕES DE PRÉ-SINCRONIZAÇÃO (REFERÊNCIAS)
 # ---------------------------------------------------------
 def sincronizar_tipos_proposicao(conexao):
-    cursor = conexao.cursor()
+    cursor = conexao.cursor(buffered=True)
     url = f"{BASE_URL}/referencias/proposicoes/siglaTipo"
     resp = http_client.get_safe(url, headers={'accept': 'application/json'})
     mapa_tipos = {}
@@ -39,7 +39,7 @@ def sincronizar_tipos_proposicao(conexao):
             if not sigla: continue
 
             cursor.execute(sql, (sigla, nome))
-            cursor.execute("SELECT idTipoProposicao FROM tipoProposicao WHERE sigla = %s AND casa = 'Camara'", (sigla,))
+            cursor.execute("SELECT idTipoProposicao FROM tipoProposicao WHERE sigla = %s AND casa = 'Camara' LIMIT 1", (sigla,))
             mapa_tipos[sigla] = cursor.fetchone()[0]
 
         conexao.commit()
@@ -47,7 +47,7 @@ def sincronizar_tipos_proposicao(conexao):
     return mapa_tipos
 
 def sincronizar_temas(conexao):
-    cursor = conexao.cursor()
+    cursor = conexao.cursor(buffered=True)
     url = f"{BASE_URL}/referencias/proposicoes/codTema"
     resp = http_client.get_safe(url, headers={'accept': 'application/json'})
     mapa_temas = {}
@@ -55,7 +55,7 @@ def sincronizar_temas(conexao):
     if resp.status_code == 200:
         temas = resp.json().get('dados', [])
         sql = """
-            INSERT INTO tema (codigoExterno, casa, descricao) VALUES (%s, 'Camara', %s)
+            INSERT INTO tema (codigoExterno, casa, descricao, nivel) VALUES (%s, 'Camara', %s, 'UNICO')
             ON DUPLICATE KEY UPDATE descricao = VALUES(descricao)
         """
         for t in temas:
@@ -63,7 +63,10 @@ def sincronizar_temas(conexao):
             nome = t.get('nome')
 
             cursor.execute(sql, (cod_externo, nome))
-            cursor.execute("SELECT idTema FROM tema WHERE codigoExterno = %s AND casa = 'Camara'", (cod_externo,))
+            cursor.execute(
+                "SELECT idTema FROM tema WHERE codigoExterno = %s AND casa = 'Camara' AND nivel = 'UNICO' LIMIT 1",
+                (cod_externo,),
+            )
             mapa_temas[cod_externo] = cursor.fetchone()[0]
 
         conexao.commit()
@@ -114,7 +117,7 @@ def executar_em_lotes(conexao, cursor, sql, linhas):
 # 3. CARGA
 # ---------------------------------------------------------
 def processar_proposicoes_camara():
-    conexao, cursor = get_connection()
+    conexao, cursor = get_connection(buffered=True)
     chk_manager = CheckpointManager(conexao)
     nome_script = "proposicao_camara_v4"
     execucao = ExecucaoEtl(conexao, nome_script)

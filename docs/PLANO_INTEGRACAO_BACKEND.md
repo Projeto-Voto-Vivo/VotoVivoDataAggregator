@@ -34,12 +34,17 @@ O Prisma foi gerado por introspecção de um banco que divergiu do agregador. De
 O banco é alimentado exclusivamente pelo ETL; a API não precisa escrever.
 
 1. **Remover** `POST /votacoes`, `POST /proposicoes`, `POST /votos`, `DELETE /votos/:id` (ou proteger com autenticação, se houver caso de uso real). Hoje qualquer pessoa pode inserir votações falsas com CORS `*`.
-2. Restringir CORS ao domínio do frontend; adicionar rate limit básico.
-3. Validar parâmetros: `Number(req.params.id)` com `NaN` chega ao Prisma e vira **500** (deveria ser 400); `GET /proposicoes/:id` inexistente devolve **200 com `null`** (deveria ser 404).
-4. Paginação obrigatória em `GET /votacoes` e `GET /proposicoes` (hoje fazem `findMany` da tabela inteira).
-5. Cumprir o contrato de `GET /parlamentares/:id/emendas`: o swagger promete `{data, meta}` paginado; o service devolve array puro sem paginação.
+2. Restringir CORS ao domínio do frontend.
+3. **Rate limit por IP em duas camadas** (contra uso excessivo/abuso):
+   - **nginx (primeira linha, limite global):** no bloco `http` dos dois confs (`nginx/nginx.conf` e `nginx/nginx-ssl.conf`), declarar `limit_req_zone $binary_remote_addr zone=api_por_ip:10m rate=10r/s;` e `limit_conn_zone $binary_remote_addr zone=conexoes_por_ip:10m;`; no `location /api/`, aplicar `limit_req zone=api_por_ip burst=20 nodelay; limit_req_status 429; limit_conn conexoes_por_ip 20; limit_conn_status 429;`. É a camada que segura o volume antes de chegar ao Node.
+   - **Express (defesa em profundidade, vale também em dev sem nginx):** middleware por IP com janela fixa em memória — sem dependência externa ou via `express-rate-limit` —, configurável por env (`RATE_LIMIT_MAX=120`, `RATE_LIMIT_JANELA_SEGUNDOS=60`; `0` desativa), respondendo **429** com `Retry-After` e headers `RateLimit-Limit/Remaining/Reset`. Registrar antes do `router` em `src/app.ts`.
+   - **Pré-requisito:** `app.set('trust proxy', 1)` — atrás do nginx (que já envia `X-Forwarded-For`), sem isso o `req.ip` é o IP do proxy e o limite vira global para todos os usuários.
+   - **Nota multi-instância:** o contador em memória é por processo; com N réplicas o limite efetivo é `max × N`. O limite global fica garantido pelo nginx; um store compartilhado (Redis) só se um dia houver múltiplos nginx.
+4. Validar parâmetros: `Number(req.params.id)` com `NaN` chega ao Prisma e vira **500** (deveria ser 400); `GET /proposicoes/:id` inexistente devolve **200 com `null`** (deveria ser 404).
+5. Paginação obrigatória em `GET /votacoes` e `GET /proposicoes` (hoje fazem `findMany` da tabela inteira).
+6. Cumprir o contrato de `GET /parlamentares/:id/emendas`: o swagger promete `{data, meta}` paginado; o service devolve array puro sem paginação.
 
-**Aceite:** rotas de escrita ausentes do router; `id` inválido → 400; recurso inexistente → 404; nenhuma listagem sem `take`.
+**Aceite:** rotas de escrita ausentes do router; `id` inválido → 400; recurso inexistente → 404; nenhuma listagem sem `take`; rajada acima do limite recebe 429 com `Retry-After` (testar com dois IPs distintos: os contadores não podem se misturar).
 
 ## Fase 2 — Presença correta
 

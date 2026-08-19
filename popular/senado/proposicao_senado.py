@@ -36,7 +36,7 @@ RE_IDENTIFICACAO = re.compile(r'^([A-Z]+)\s+(\d+)/(\d{4})$')
 # 1. FUNÇÕES DE PRÉ-SINCRONIZAÇÃO (REFERÊNCIAS)
 # ---------------------------------------------------------
 def sincronizar_tipos_proposicao(conexao):
-    cursor = conexao.cursor()
+    cursor = conexao.cursor(buffered=True)
     url = f"{BASE_URL_SENADO}/processo/siglas"
     resp = http_client.get_safe(url, headers={'accept': 'application/json'})
     mapa_tipos = {}
@@ -55,7 +55,7 @@ def sincronizar_tipos_proposicao(conexao):
             if not sigla: continue
 
             cursor.execute(sql, (sigla, nome))
-            cursor.execute("SELECT idTipoProposicao FROM tipoProposicao WHERE sigla = %s AND casa = 'Senado'", (sigla,))
+            cursor.execute("SELECT idTipoProposicao FROM tipoProposicao WHERE sigla = %s AND casa = 'Senado' LIMIT 1", (sigla,))
             mapa_tipos[sigla] = cursor.fetchone()[0]
 
         conexao.commit()
@@ -64,7 +64,7 @@ def sincronizar_tipos_proposicao(conexao):
     return mapa_tipos
 
 def sincronizar_temas(conexao):
-    cursor = conexao.cursor()
+    cursor = conexao.cursor(buffered=True)
     url = f"{BASE_URL_SENADO}/processo/assuntos"
     resp = http_client.get_safe(url, headers={'accept': 'application/json'})
     mapa_temas = {}
@@ -73,8 +73,9 @@ def sincronizar_temas(conexao):
         dados = resp.json()
         temas = dados if isinstance(dados, list) else dados.get('Assuntos', [])
 
+
         sql = """
-            INSERT INTO tema (codigoExterno, casa, descricao) VALUES (%s, 'Senado', %s)
+            INSERT INTO tema (codigoExterno, casa, descricao, nivel) VALUES (%s, 'Senado', %s, 'ESPECIFICO')
             ON DUPLICATE KEY UPDATE descricao = VALUES(descricao)
         """
         for t in temas:
@@ -83,7 +84,10 @@ def sincronizar_temas(conexao):
             if not cod_externo or not nome: continue
 
             cursor.execute(sql, (int(cod_externo), nome))
-            cursor.execute("SELECT idTema FROM tema WHERE codigoExterno = %s AND casa = 'Senado'", (int(cod_externo),))
+            cursor.execute(
+                "SELECT idTema FROM tema WHERE codigoExterno = %s AND casa = 'Senado' AND nivel = 'ESPECIFICO' LIMIT 1",
+                (int(cod_externo),),
+            )
             mapa_temas[int(cod_externo)] = cursor.fetchone()[0]
 
         conexao.commit()
@@ -102,7 +106,7 @@ def garantir_tipo(conexao, cursor, map_tipos, sigla):
         (sigla, sigla),
     )
     conexao.commit()
-    cursor.execute("SELECT idTipoProposicao FROM tipoProposicao WHERE sigla = %s AND casa = 'Senado'", (sigla,))
+    cursor.execute("SELECT idTipoProposicao FROM tipoProposicao WHERE sigla = %s AND casa = 'Senado' LIMIT 1", (sigla,))
     res = cursor.fetchone()
     if res:
         map_tipos[sigla] = res[0]
@@ -158,7 +162,7 @@ def executar_em_lotes(conexao, cursor, sql, linhas):
 # 3. CARGA
 # ---------------------------------------------------------
 def processar_proposicoes_senado():
-    conexao, cursor = get_connection()
+    conexao, cursor = get_connection(buffered=True)
     chk_manager = CheckpointManager(conexao)
     nome_script = "proposicao_senado_v3"
     execucao = ExecucaoEtl(conexao, nome_script)
