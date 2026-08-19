@@ -52,6 +52,7 @@ Bancos criados com uma versão anterior do `schema.sql` devem aplicar as migraç
 
 ```bash
 mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade.sql
+mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade_parte2.sql
 ```
 
 ### Banco de testes
@@ -119,6 +120,7 @@ Toda a lógica repetida entre scripts vive em `utils/`, em vez de duplicada em c
 | `utils/checkpoint_manager.py` | `CheckpointManager` — lê/grava o progresso na tabela `etlCheckpoint` (ver seção Checkpoints abaixo). |
 | `utils/http_client.py` | `http_client` (instância de `ResilientSession`) — cliente HTTP com retry automático e pausas de segurança contra rate limit (ver seção abaixo). |
 | `utils/orgao_cache.py` | `OrgaoCache` — resolve `idApi -> idOrgao` para uma casa, criando um registro placeholder em `orgao` quando o órgão ainda não é conhecido. |
+| `utils/etl_erro.py` | `EtlErro` — fila de erros (dead-letter) persistida na tabela `etlErro` (ver seção Fila de erros abaixo). |
 
 ## Checkpoints
 
@@ -135,6 +137,29 @@ Para forçar a reexecução completa de um script, apague o checkpoint correspon
 ```sql
 DELETE FROM etlCheckpoint WHERE nomeScript LIKE 'nome_do_script%';
 ```
+
+## Fila de erros (etlErro)
+
+Quando um item individual falha (uma votação, uma proposição, uma emenda), o erro é registrado na tabela `etlErro` em vez de ser apenas logado e perdido. Os scripts de tramitação e de votos releem os itens pendentes (`resolvido = 0`) no início da execução seguinte e os reprocessam automaticamente, marcando-os como resolvidos ao ter sucesso. Para inspecionar o que ficou para trás:
+
+```sql
+SELECT nomeScript, chaveItem, erro, tentativas, dataUltimoErro
+FROM etlErro WHERE resolvido = 0;
+```
+
+## Staging (cache HTTP)
+
+Para proteger o progresso contra retrabalho — reprocessar transformações sem bater de novo nas APIs — o `http_client` suporta um cache em disco das respostas brutas, controlado por variáveis de ambiente:
+
+| Valor de `ETL_HTTP_CACHE` | Comportamento |
+|---------------------------|----------------|
+| *(vazio, padrão)* | Desligado. |
+| `gravar` | Toda resposta HTTP 200 é gravada em `ETL_HTTP_CACHE_DIR` (padrão `staging/http_cache`). |
+| `ler` | Respostas já em disco são servidas de lá (sem rede); o que faltar é buscado na API e gravado. |
+
+Fluxo típico: rodar a carga com `ETL_HTTP_CACHE=gravar`; se depois for preciso corrigir uma transformação e recarregar, apagar os checkpoints e rodar com `ETL_HTTP_CACHE=ler` — a recarga inteira sai do disco em minutos. O diretório `staging/` está no `.gitignore`.
+
+> **Atenção:** em modo `ler` os dados podem estar defasados em relação à API. Use-o para reprocessos, não para atualizar dados.
 
 ## Limites de taxa (Rate Limiting)
 

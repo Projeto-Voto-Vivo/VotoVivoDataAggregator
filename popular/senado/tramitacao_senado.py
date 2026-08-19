@@ -5,7 +5,11 @@ from tqdm import tqdm
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.etl_erro import EtlErro
+from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
+
+logger = get_logger("ETL_Tramitacao_Senado")
 
 BASE_URL_SENADO = "https://legis.senado.leg.br/dadosabertos"
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
@@ -16,6 +20,7 @@ chk_manager = CheckpointManager(db)
 orgaos = OrgaoCache(db, cursor, "Senado")
 
 script_senado = "popular/tramitacao.py#senado"
+fila_erros = EtlErro(db, script_senado)
 
 def importar_tramitacao_senado():
     checkpoint_atual = int(chk_manager.obter(script_senado, default_value="0"))
@@ -25,6 +30,18 @@ def importar_tramitacao_senado():
         ORDER BY p.idProposicao ASC
     """, (checkpoint_atual,))
     fila_proposicoes = cursor.fetchall()
+
+    # Reprocesso: proposições que falharam em execuções anteriores voltam à
+    # fila mesmo estando atrás do checkpoint.
+    pendentes = {int(c) for c in fila_erros.listar_pendentes() if str(c).isdigit()}
+    if pendentes:
+        placeholders = ",".join(["%s"] * len(pendentes))
+        cursor.execute(f"""
+            SELECT p.idProposicao, p.idApi FROM proposicao p
+            WHERE p.idProposicao IN ({placeholders}) AND p.idApi IS NOT NULL
+        """, tuple(pendentes))
+        fila_proposicoes = cursor.fetchall() + fila_proposicoes
+        logger.info(f"{len(pendentes)} proposições com erro pendente serão reprocessadas.")
 
     if is_test_mode:
         fila_proposicoes = fila_proposicoes[:5]
@@ -41,7 +58,8 @@ def importar_tramitacao_senado():
             res = http_client.get_safe(url, headers=headers, timeout=30)
 
             if res.status_code != 200:
-                chk_manager.salvar(script_senado, id_interno)
+                if id_interno > checkpoint_atual:
+                    chk_manager.salvar(script_senado, id_interno)
                 db.commit()
                 continue
 
@@ -77,12 +95,18 @@ def importar_tramitacao_senado():
                         despacho = VALUES(despacho)
                 """, (id_api_tramitacao, id_interno, id_orgao, data_hora, seq, descr_tramitacao, m.get("TextoParecer") or m.get("DescricaoUltimaSituacao")))
 
-            chk_manager.salvar(script_senado, id_interno)
+            # Um item reprocessado da fila de erros não pode regredir o cursor
+            if id_interno > checkpoint_atual:
+                chk_manager.salvar(script_senado, id_interno)
             db.commit()
+            if id_interno in pendentes:
+                fila_erros.resolver(id_interno)
             time.sleep(0.1)
 
-        except Exception:
+        except Exception as e:
             db.rollback()
+            logger.error(f"Erro ao importar tramitações da matéria {id_interno} ({id_api}): {e}")
+            fila_erros.registrar(id_interno, e)
             continue
 
 if __name__ == "__main__":

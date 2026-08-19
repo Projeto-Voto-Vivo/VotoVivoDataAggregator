@@ -1,7 +1,23 @@
+import hashlib
+import json
+import os
 import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
+
+class RespostaCache:
+    """Objeto mínimo compatível com requests.Response, servido do cache em disco."""
+
+    def __init__(self, url, status_code, text):
+        self.url = url
+        self.status_code = status_code
+        self.text = text
+        self.content = text.encode("utf-8")
+
+    def json(self):
+        return json.loads(self.text)
 
 
 class RateLimitAbort(BaseException):
@@ -43,6 +59,49 @@ class ResilientSession(requests.Session):
         self.max_holds = max_holds
         self.hold_inicial_segundos = hold_inicial_segundos
 
+        # Staging (cache HTTP em disco), controlado por variáveis de ambiente:
+        #   ETL_HTTP_CACHE=gravar  -> toda resposta 200 é gravada em disco
+        #   ETL_HTTP_CACHE=ler     -> serve do disco quando existir (reprocesso
+        #                             sem bater na API); o que faltar é buscado
+        #                             na API e gravado
+        #   (vazio/ausente)        -> desligado
+        # Permite reprocessar transformações ilimitadas vezes sem custo de rede.
+        self.cache_modo = os.getenv("ETL_HTTP_CACHE", "").strip().lower()
+        self.cache_dir = os.getenv("ETL_HTTP_CACHE_DIR", "staging/http_cache")
+
+    def _cache_caminho(self, url, params):
+        chave = url
+        if params:
+            chave += "?" + json.dumps(params, sort_keys=True, ensure_ascii=False, default=str)
+        nome = hashlib.sha1(chave.encode("utf-8")).hexdigest()
+        return os.path.join(self.cache_dir, f"{nome}.json")
+
+    def _cache_ler(self, url, params):
+        if self.cache_modo != "ler":
+            return None
+        caminho = self._cache_caminho(url, params)
+        if not os.path.exists(caminho):
+            return None
+        try:
+            with open(caminho, encoding="utf-8") as f:
+                dados = json.load(f)
+            return RespostaCache(dados["url"], dados["status_code"], dados["text"])
+        except Exception:
+            return None
+
+    def _cache_gravar(self, url, params, response):
+        if self.cache_modo not in ("gravar", "ler") or response.status_code != 200:
+            return
+        try:
+            os.makedirs(self.cache_dir, exist_ok=True)
+            with open(self._cache_caminho(url, params), "w", encoding="utf-8") as f:
+                json.dump(
+                    {"url": str(response.url), "status_code": response.status_code, "text": response.text},
+                    f, ensure_ascii=False,
+                )
+        except Exception:
+            pass  # staging nunca pode derrubar a carga
+
     def get_safe(self, url, wait_429=60, max_429_retries=3, **kwargs):
         """
         Executa um GET com tratamento específico para limites de taxa (Rate Limits).
@@ -51,6 +110,10 @@ class ResilientSession(requests.Session):
         pausa de segurança cada vez mais longa (5, 10, 20 minutos); se mesmo assim
         continuar bloqueado, levanta RateLimitAbort para parar o script em segurança.
         """
+        resposta_cache = self._cache_ler(url, kwargs.get("params"))
+        if resposta_cache is not None:
+            return resposta_cache
+
         for hold in range(self.max_holds + 1):
             tentativas = 0
             response = None
@@ -67,6 +130,7 @@ class ResilientSession(requests.Session):
                         tentativas += 1
                         continue
 
+                    self._cache_gravar(url, kwargs.get("params"), response)
                     return response
 
                 except requests.exceptions.RequestException as e:

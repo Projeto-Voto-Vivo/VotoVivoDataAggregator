@@ -3,6 +3,7 @@ import time
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.etl_erro import EtlErro
 from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
 
@@ -18,17 +19,94 @@ def fazer_requisicao_com_retry(url):
     if resp.status_code == 200: return resp
     return None
 
+# Siglas oficiais do painel do Senado. Antes, "P" (presente) era classificado
+# como ABSTENCAO e as licenças/missões viravam voto — distorcendo as métricas.
+MAPA_VOTO_SENADO = {
+    "SIM": "SIM", "S": "SIM",
+    "NÃO": "NAO", "NAO": "NAO", "N": "NAO",
+    "ABSTENÇÃO": "ABSTENCAO", "ABSTENCAO": "ABSTENCAO",
+    "OBSTRUÇÃO": "OBSTRUCAO", "OBSTRUCAO": "OBSTRUCAO",
+    "P-NRV": "NAO REGISTRADO",   # presente, não registrou voto
+    "P": "NAO REGISTRADO",       # presente
+    "VOTOU": "NAO REGISTRADO",   # votação secreta
+    "NA": "NAO REGISTRADO",      # não apurado
+    "AP": "AUSENCIA JUSTIFICADA",   # atividade parlamentar
+    "LS": "AUSENCIA JUSTIFICADA",   # licença saúde
+    "LAP": "AUSENCIA JUSTIFICADA",  # licença atividade parlamentar
+    "LP": "AUSENCIA JUSTIFICADA",   # licença particular
+    "MIS": "AUSENCIA JUSTIFICADA",  # missão
+    "REP": "AUSENCIA JUSTIFICADA",  # representação
+    "NCOM": "AUSENTE",              # não compareceu
+}
+
+def extrair_voto_bruto(v):
+    """Extrai o texto do voto preferindo os campos oficiais; só na ausência
+    deles recorre à concatenação defensiva dos campos string."""
+    for chave in ("siglaVoto", "SiglaVoto", "siglaDescricaoVoto", "descricaoVoto", "DescricaoVoto", "voto", "Voto"):
+        val = v.get(chave)
+        if isinstance(val, str) and val.strip():
+            return val
+
+    partes = []
+    for key, val in v.items():
+        if isinstance(val, str):
+            chave_limpa = key.lower()
+            if 'nome' not in chave_limpa and 'partido' not in chave_limpa and 'uf' not in chave_limpa:
+                partes.append(val)
+    return " ".join(partes)
+
 def mapear_voto_senado(voto_string):
-    """Mapeia os votos considerando textos completos e as siglas de painel do Senado (S, N, P)"""
     voto = str(voto_string).upper().strip() if voto_string else ""
-    palavras = voto.split()
-    
-    if "SIM" in voto or "S" in palavras: return "SIM"
-    if "NÃO" in voto or "NAO" in voto or "N" in palavras: return "NAO"
-    if "ABSTENÇÃO" in voto or "ABSTENCAO" in voto or "P" in palavras: return "ABSTENCAO"
-    if "OBSTRUÇÃO" in voto or "OBSTRUCAO" in voto: return "OBSTRUCAO"
-    if "ART. 17" in voto or "PRESIDENTE" in voto: return "NAO REGISTRADO"
+
+    # Sigla exata primeiro (ex.: "P-NRV (Presente - não registrou voto)" -> "P-NRV")
+    sigla = voto.split("(")[0].strip()
+    if sigla in MAPA_VOTO_SENADO:
+        return MAPA_VOTO_SENADO[sigla]
+
+    if "NRV" in voto or "PRESIDENTE" in voto or "ART" in voto or "VOTOU" in voto:
+        return "NAO REGISTRADO"
+    if "OBSTRU" in voto: return "OBSTRUCAO"
+    if "ABSTEN" in voto: return "ABSTENCAO"
+    if any(t in voto for t in ("LICEN", "MISS", "ATIVIDADE", "REPRESENTA", "SAUDE", "SAÚDE", "JUSTIFICAD")):
+        return "AUSENCIA JUSTIFICADA"
+    if "COMPARECEU" in voto or "AUSEN" in voto:
+        return "AUSENTE"
+    if voto.startswith("SIM"): return "SIM"
+    if voto.startswith("NÃO") or voto.startswith("NAO"): return "NAO"
     return "NAO REGISTRADO"
+
+def presenca_do_voto(voto_enum):
+    if voto_enum == "AUSENTE":
+        return "AUSENTE"
+    if voto_enum == "AUSENCIA JUSTIFICADA":
+        return "JUSTIFICADA"
+    return "PRESENTE"
+
+def buscar_exercicios_senador(id_api):
+    """Períodos (DataInicio, DataFim) em que o senador efetivamente exerceu o
+    mandato. DataFim ausente significa exercício em curso. Devolve None se a
+    API falhar (o chamador decide como tratar)."""
+    resp = fazer_requisicao_com_retry(f"{BASE_URL}/senador/{id_api}/mandatos")
+    if not resp:
+        return None
+    try:
+        dados = resp.json()
+        mandatos = (((dados.get('MandatoParlamentar') or {}).get('Parlamentar') or {}).get('Mandatos') or {}).get('Mandato') or []
+        if isinstance(mandatos, dict):
+            mandatos = [mandatos]
+
+        periodos = []
+        for m in mandatos:
+            exercicios = (m.get('Exercicios') or {}).get('Exercicio') or []
+            if isinstance(exercicios, dict):
+                exercicios = [exercicios]
+            for e in exercicios:
+                inicio = e.get('DataInicio')
+                if inicio:
+                    periodos.append((inicio, e.get('DataFim')))
+        return periodos
+    except Exception:
+        return None
 
 def mapear_resultado_senado(resultado_raw):
     resultado_raw = str(resultado_raw or "")
@@ -45,6 +123,7 @@ def processar_votacoes_presencas_senado():
     orgaos = OrgaoCache(conexao, cursor, "Senado", logger=logger)
 
     nome_script = "votacao_presenca_senado_v2"
+    fila_erros = EtlErro(conexao, nome_script)
 
     logger.info("A carregar Senadores em atividade para a memória...")
     cursor.execute("SELECT idParlamentar, idApi FROM parlamentar WHERE cargo = 'Senador(a)'")
@@ -68,6 +147,27 @@ def processar_votacoes_presencas_senado():
     cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '1001' AND casa = 'Senado'")
     id_plenario_senado = cursor.fetchone()['idOrgao']
     conexao.commit()
+
+    # Períodos de exercício de cada senador: um senador só pode ser marcado
+    # como AUSENTE em sessões dentro do seu exercício — sem isso, quem assumiu
+    # em 2025 apareceria "ausente" em todas as sessões de 2023.
+    exercicios_senadores = {}
+    if proposicoes:
+        logger.info("A carregar períodos de exercício dos senadores...")
+        for id_api_sen in map_senadores:
+            periodos = buscar_exercicios_senador(id_api_sen)
+            if periodos is None:
+                logger.warning(f"Sem dados de exercício para o senador {id_api_sen}; ele não será marcado como ausente.")
+            exercicios_senadores[id_api_sen] = periodos
+            time.sleep(0.1)
+
+    def em_exercicio(id_api_sen, data_sessao):
+        """Sem dados de exercício ou de data, devolve False — nunca marcar
+        ausência que não se pode comprovar."""
+        periodos = exercicios_senadores.get(id_api_sen)
+        if not data_sessao or not periodos:
+            return False
+        return any(inicio <= data_sessao and (not fim or data_sessao <= fim) for inicio, fim in periodos)
 
     logger.info(f"=== INICIANDO ETL DE VOTAÇÕES DO SENADO V4 ({total_props} Proposições) ===")
 
@@ -140,55 +240,52 @@ def processar_votacoes_presencas_senado():
                 id_votacao_interno = cursor.fetchone()['idVotacao']
 
                 # 3. Votos
-                senadores_votaram = set()
-                contagem_votos = {'SIM': 0, 'NAO': 0, 'ABSTENCAO': 0, 'OBSTRUCAO': 0, 'NAO REGISTRADO': 0}
+                senadores_no_painel = set()
+                contagem_votos = {'SIM': 0, 'NAO': 0, 'ABSTENCAO': 0, 'OBSTRUCAO': 0,
+                                  'AUSENCIA JUSTIFICADA': 0, 'AUSENTE': 0, 'NAO REGISTRADO': 0}
 
                 sql_voto = """
                     INSERT INTO voto (idParlamentar, idVotacao, idApi, votoRegistrado)
                     VALUES (%s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE votoRegistrado=VALUES(votoRegistrado)
                 """
-                sql_presenca = "INSERT IGNORE INTO presenca (idParlamentar, idEvento, statusPresenca) VALUES (%s, %s, 'PRESENTE')"
+                sql_presenca = "INSERT IGNORE INTO presenca (idParlamentar, idEvento, statusPresenca) VALUES (%s, %s, %s)"
 
                 for v in votos_api:
                     if not isinstance(v, dict): continue
-                    
+
                     id_senador_api = str(v.get('codigoParlamentar', ''))
                     if not id_senador_api: continue
-                    
-                    voto_bruto = ""
-                    for key, val in v.items():
-                        if isinstance(val, str):
-                            chave_limpa = key.lower()
-                            if 'nome' not in chave_limpa and 'partido' not in chave_limpa and 'uf' not in chave_limpa:
-                                voto_bruto += f" {val} "
-                                
-                    voto_enum = mapear_voto_senado(voto_bruto)
+
+                    voto_enum = mapear_voto_senado(extrair_voto_bruto(v))
                     contagem_votos[voto_enum] += 1
-                    
+
                     if id_senador_api in map_senadores:
                         id_parlamentar_interno = map_senadores[id_senador_api]
                         id_voto_api = f"{id_sessao}_{id_senador_api}"
-                        
-                        cursor.execute(sql_voto, (id_parlamentar_interno, id_votacao_interno, id_voto_api, voto_enum))
-                        cursor.execute(sql_presenca, (id_parlamentar_interno, id_evento_interno))
-                        senadores_votaram.add(id_senador_api)
 
-                # 4. Faltas (Auditoria)
-                sql_falta = "INSERT IGNORE INTO presenca (idParlamentar, idEvento, statusPresenca) VALUES (%s, %s, 'AUSENTE')"
+                        cursor.execute(sql_voto, (id_parlamentar_interno, id_votacao_interno, id_voto_api, voto_enum))
+                        # A presença deriva do que o painel registrou: licença/missão
+                        # vira JUSTIFICADA, "não compareceu" vira AUSENTE.
+                        cursor.execute(sql_presenca, (id_parlamentar_interno, id_evento_interno, presenca_do_voto(voto_enum)))
+                        senadores_no_painel.add(id_senador_api)
+
+                # 4. Faltas (Auditoria) — apenas senadores em exercício na data da
+                # sessão e que não constam do painel de votação.
                 ausentes = 0
                 for id_api, id_interno in map_senadores.items():
-                    if id_api not in senadores_votaram:
-                        cursor.execute(sql_falta, (id_interno, id_evento_interno))
+                    if id_api not in senadores_no_painel and em_exercicio(id_api, data_votacao):
+                        cursor.execute(sql_presenca, (id_interno, id_evento_interno, 'AUSENTE'))
                         ausentes += 1
 
                 conexao.commit()
-                logger.info(f"      └─ Sucesso: {len(senadores_votaram)} Votantes | {ausentes} Ausentes.")
+                logger.info(f"      └─ Sucesso: {len(senadores_no_painel)} no painel | {ausentes} Ausentes.")
                 logger.info(f"      └─ Detalhe Votos Extraídos: {contagem_votos['SIM']} SIM | {contagem_votos['NAO']} NÃO | {contagem_votos['ABSTENCAO']} ABS.")
-                
+
             except Exception as e:
                 conexao.rollback()
                 logger.error(f"Erro ao processar votação {id_sessao}: {e}")
+                fila_erros.registrar(f"materia_{id_materia_api}_sessao_{id_sessao}", e)
                 sucesso_prop = False
 
         if not sucesso_prop:

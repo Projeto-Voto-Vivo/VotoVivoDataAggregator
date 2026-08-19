@@ -205,3 +205,6 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Staging do ETL (cache HTTP das respostas brutas das APIs)
+staging/

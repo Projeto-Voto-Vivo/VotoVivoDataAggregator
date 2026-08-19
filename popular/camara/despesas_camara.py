@@ -1,3 +1,4 @@
+import hashlib
 import os
 import time
 from datetime import datetime
@@ -32,6 +33,18 @@ cursor.execute("""
 deputados = cursor.fetchall()
 
 total_inserido = 0
+
+def chave_natural_despesa(id_api_dep, d):
+    """Chave natural do documento: codDocumento quando existe; caso contrário,
+    um hash determinístico dos campos estáveis (idempotente entre execuções)."""
+    cod_doc = d.get("codDocumento")
+    if cod_doc:
+        return f"CAM_{cod_doc}"
+    base = "|".join(str(v) for v in (
+        id_api_dep, d.get("dataDocumento"), d.get("valorLiquido"),
+        d.get("cnpjCpfFornecedor"), d.get("numDocumento"), d.get("tipoDespesa"),
+    ))
+    return "CAMH_" + hashlib.sha1(base.encode("utf-8")).hexdigest()
 
 def buscar_despesas_deputado(id_api_dep, ano, meses):
     url = f"https://dadosabertos.camara.leg.br/api/v2/deputados/{id_api_dep}/despesas"
@@ -78,6 +91,7 @@ try:
             batch = []
             for d in despesas:
                 batch.append((
+                    chave_natural_despesa(id_api, d),
                     id_interno, d.get("dataDocumento"), d.get("valorLiquido"),
                     d.get("nomeFornecedor"), d.get("cnpjCpfFornecedor"),
                     d.get("urlDocumento"), d.get("tipoDespesa"),
@@ -89,8 +103,8 @@ try:
             if batch:
                 cursor.executemany('''
                     INSERT IGNORE INTO despesa
-                    (idParlamentar, dataDespesa, valor, fornecedorNome, fornecedorCnpjCpf, notaFiscalUrl, categoria)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (idApi, idParlamentar, dataDespesa, valor, fornecedorNome, fornecedorCnpjCpf, notaFiscalUrl, categoria)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ''', batch)
                 total_inserido += len(batch)
 

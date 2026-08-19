@@ -6,6 +6,7 @@ from datetime import datetime
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.etl_erro import EtlErro
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
@@ -23,6 +24,7 @@ print("Conexão estabelecida para Emendas Parlamentares.")
 chk_manager = CheckpointManager(db)
 
 script_checkpoint = "popular/emenda.py#dinamico_v2"
+fila_erros = EtlErro(db, script_checkpoint)
 
 def converter_valor(valor):
     if valor is None or valor == "":
@@ -72,6 +74,7 @@ ano_atual_chk, pagina = map(int, checkpoint_atual.split("_"))
 contador_emendas = 0
 contador_documentos = 0
 start_time = time.time()
+interrompido = False
 
 pagina_limite_teste = pagina + 2
 
@@ -86,10 +89,12 @@ try:
         while True:
             if is_test_mode and pagina > pagina_limite_teste:
                 print(f"\n[MODO TESTE] Parando na página {pagina} do ano {ano}.")
+                interrompido = True
                 break
 
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
                 print(f"\n[LIMITE DE TEMPO] Interrompido na página {pagina} do ano {ano}.")
+                interrompido = True
                 break
 
             url_emendas = "https://api.portaldatransparencia.gov.br/api-de-dados/emendas"
@@ -107,6 +112,7 @@ try:
 
             if response.status_code != 200:
                 print(f"Erro na página {pagina} do ano {ano}: {response.status_code}")
+                interrompido = True
                 break
 
             emendas = response.json()
@@ -152,12 +158,26 @@ try:
                             continue
 
                     sql_emenda = '''
-                        INSERT IGNORE INTO emenda (
+                        INSERT INTO emenda (
                             codigoEmenda, ano, tipoEmenda, autor, nomeAutor, numeroEmenda,
                             localidadeDoGasto, funcao, subfuncao, valorEmpenhado,
                             valorLiquidado, valorPago, valorRestoInscrito, valorRestoCancelado, valorRestoPago
                         )
                         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                            tipoEmenda = VALUES(tipoEmenda),
+                            autor = VALUES(autor),
+                            nomeAutor = VALUES(nomeAutor),
+                            numeroEmenda = VALUES(numeroEmenda),
+                            localidadeDoGasto = VALUES(localidadeDoGasto),
+                            funcao = VALUES(funcao),
+                            subfuncao = VALUES(subfuncao),
+                            valorEmpenhado = VALUES(valorEmpenhado),
+                            valorLiquidado = VALUES(valorLiquidado),
+                            valorPago = VALUES(valorPago),
+                            valorRestoInscrito = VALUES(valorRestoInscrito),
+                            valorRestoCancelado = VALUES(valorRestoCancelado),
+                            valorRestoPago = VALUES(valorRestoPago)
                     '''
                     valores_emenda = (
                         codigo_emenda,
@@ -218,8 +238,9 @@ try:
 
                 except Exception as e:
                     print(f" Erro ao processar emenda {codigo_emenda}: {e}")
-                    if db.in_transaction: 
+                    if db.in_transaction:
                         db.rollback()
+                    fila_erros.registrar(codigo_emenda, e)
             
             if db.in_transaction:
                 db.commit()
@@ -228,6 +249,10 @@ try:
             db.commit()
             
             pagina += 1
+
+    if not interrompido:
+        chk_manager.salvar(script_checkpoint, f"{ANO_ATUAL}_1")
+        print(f"\n[i] Carga completa. Próxima execução fará refresh do ano {ANO_ATUAL}.")
 
 except KeyboardInterrupt:
     print(f"\n[!] Execução interrompida. O par {ano}_{pagina} será reprocessado.")

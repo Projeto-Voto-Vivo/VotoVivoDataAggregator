@@ -5,6 +5,7 @@ import os
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.etl_erro import EtlErro
 from utils.logging_config import get_logger
 
 logger = get_logger("VotoETL")
@@ -38,9 +39,17 @@ def importar_votos_camara():
     total_votos = 0
     start_time = time.time()
 
+    # Reprocesso: votações que falharam em execuções anteriores voltam à fila,
+    # mesmo estando atrás do checkpoint.
+    fila_erros = EtlErro(db, script_camara)
+    pendentes = set(fila_erros.listar_pendentes())
+    if pendentes:
+        logger.info(f"{len(pendentes)} votações com erro pendente serão reprocessadas.")
+
     try:
         for index, (id_api_votacao, id_votacao) in enumerate(votacoes):
-            if id_votacao <= checkpoint_atual: continue
+            if id_votacao <= checkpoint_atual and str(id_api_votacao) not in pendentes:
+                continue
             if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos: 
                 logger.warning("Tempo limite atingido para Votos da Câmara.")
                 break
@@ -57,9 +66,12 @@ def importar_votos_camara():
                 if db.in_transaction: db.commit()
                 db.start_transaction()
 
-                if not dados: 
-                    chk_manager.salvar(script_camara, id_votacao)
+                if not dados:
+                    if id_votacao > checkpoint_atual:
+                        chk_manager.salvar(script_camara, id_votacao)
                     db.commit()
+                    if str(id_api_votacao) in pendentes:
+                        fila_erros.resolver(str(id_api_votacao))
                     continue
 
                 batch = []
@@ -95,12 +107,17 @@ def importar_votos_camara():
                     ''', batch)
                     total_votos += len(batch)
 
-                chk_manager.salvar(script_camara, id_votacao)
+                # Um item reprocessado da fila de erros não pode regredir o cursor
+                if id_votacao > checkpoint_atual:
+                    chk_manager.salvar(script_camara, id_votacao)
                 db.commit()
+                if str(id_api_votacao) in pendentes:
+                    fila_erros.resolver(str(id_api_votacao))
                 time.sleep(0.1)
             except Exception as e:
                 logger.error(f"Erro ao buscar votos da votação {id_votacao}: {e}")
                 if db.in_transaction: db.rollback()
+                fila_erros.registrar(str(id_api_votacao), e)
                 continue
     except KeyboardInterrupt:
         logger.warning("Execução interrompida pelo usuário.")

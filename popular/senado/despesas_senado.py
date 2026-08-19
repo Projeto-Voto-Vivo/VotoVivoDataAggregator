@@ -1,3 +1,4 @@
+import hashlib
 import os
 from datetime import datetime
 from tqdm import tqdm
@@ -24,6 +25,18 @@ cursor.execute("SELECT idApi, idParlamentar FROM parlamentar WHERE cargo = 'Sena
 mapa_parlamentares = {str(p[0]): p[1] for p in cursor.fetchall()}
 
 total_inserido = 0
+
+def chave_natural_despesa(d):
+    """Chave natural do documento: o campo `id` da API CEAPS; na ausência dele,
+    um hash determinístico dos campos estáveis (idempotente entre execuções)."""
+    id_doc = d.get("id")
+    if id_doc:
+        return f"SEN_{id_doc}"
+    base = "|".join(str(v) for v in (
+        d.get("codSenador"), d.get("data"), d.get("cpfCnpj"),
+        d.get("valorReembolsado"), d.get("documento"), d.get("tipoDespesa"),
+    ))
+    return "SENH_" + hashlib.sha1(base.encode("utf-8")).hexdigest()
 
 def processar_despesas_senado_em_bloco(ano):
     url = f"https://adm.senado.gov.br/adm-dadosabertos/api/v1/senadores/despesas_ceaps/{ano}"
@@ -69,6 +82,7 @@ try:
                 if id_api_sen in mapa_parlamentares:
                     id_interno = mapa_parlamentares[id_api_sen]
                     batch_senado.append((
+                        chave_natural_despesa(d),
                         id_interno, data_despesa_str, d.get("valorReembolsado"),
                         d.get("fornecedor"), d.get("cpfCnpj"), None, d.get("tipoDespesa"),
                     ))
@@ -79,8 +93,8 @@ try:
             if batch_senado:
                 cursor.executemany('''
                     INSERT IGNORE INTO despesa
-                    (idParlamentar, dataDespesa, valor, fornecedorNome, fornecedorCnpjCpf, notaFiscalUrl, categoria)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (idApi, idParlamentar, dataDespesa, valor, fornecedorNome, fornecedorCnpjCpf, notaFiscalUrl, categoria)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ''', batch_senado)
                 total_inserido += len(batch_senado)
 

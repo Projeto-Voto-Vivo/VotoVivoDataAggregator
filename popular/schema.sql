@@ -10,6 +10,20 @@ CREATE TABLE etlCheckpoint (
     INDEX idx_etl_checkpoint_script (nomeScript)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE etlErro (
+    idEtlErro INT AUTO_INCREMENT PRIMARY KEY,
+    nomeScript VARCHAR(100) NOT NULL,
+    chaveItem VARCHAR(255) NOT NULL,
+    erro TEXT,
+    payload MEDIUMTEXT NULL,
+    tentativas INT NOT NULL DEFAULT 1,
+    resolvido TINYINT(1) NOT NULL DEFAULT 0,
+    dataPrimeiroErro DATETIME DEFAULT CURRENT_TIMESTAMP,
+    dataUltimoErro DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY unique_erro_item (nomeScript, chaveItem),
+    INDEX idx_etl_erro_pendentes (nomeScript, resolvido)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE parlamentar (
     idParlamentar INT AUTO_INCREMENT PRIMARY KEY,
     idApi VARCHAR(50) NOT NULL,
@@ -164,6 +178,7 @@ CREATE TABLE redeSocial (
 
 CREATE TABLE despesa (
     idDespesa INT AUTO_INCREMENT PRIMARY KEY,
+    idApi VARCHAR(100) NOT NULL,
     idParlamentar INT NOT NULL,
     dataDespesa DATE,
     valor DECIMAL(10, 2),
@@ -174,6 +189,7 @@ CREATE TABLE despesa (
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
         ON DELETE CASCADE,
+    UNIQUE KEY unique_despesa_api (idApi),
     INDEX idx_despesa_parlamentar (idParlamentar),
     INDEX idx_despesa_data (dataDespesa)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

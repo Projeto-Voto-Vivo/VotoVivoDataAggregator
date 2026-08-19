@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.etl_erro import EtlErro
 from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
 
@@ -20,6 +21,7 @@ chk_manager = CheckpointManager(db)
 orgaos = OrgaoCache(db, cursor, "Camara", logger=logger)
 
 script_camara = "popular/votacao.py#camara_logs"
+fila_erros = EtlErro(db, script_camara)
 
 def obter_ultimo_dia_mes(ano, mes):
     if mes == 12: return 31
@@ -154,6 +156,7 @@ def importar_votacoes_camara():
 
                         except Exception as e:
                             logger.error(f"Erro ao processar detalhes da votação {id_api}: {e}")
+                            fila_erros.registrar(str(id_api), e)
                             continue
 
                     chk_manager.salvar(script_camara, f"{ano}_{num_mes}_{pagina}")

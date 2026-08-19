@@ -5,7 +5,11 @@ from tqdm import tqdm
 from utils.http_client import http_client
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.etl_erro import EtlErro
+from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
+
+logger = get_logger("ETL_Tramitacao_Camara")
 
 BASE_URL_CAMARA = "https://dadosabertos.camara.leg.br/api/v2"
 tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
@@ -15,6 +19,7 @@ chk_manager = CheckpointManager(db)
 orgaos = OrgaoCache(db, cursor, "Camara")
 
 script_camara = "popular/tramitacao.py#camara"
+fila_erros = EtlErro(db, script_camara)
 
 cursor.execute("SELECT idTipoTramitacao, idApi FROM tipoTramitacao")
 map_tipo = {str(row[1]): row[0] for row in cursor.fetchall()}
@@ -34,6 +39,18 @@ def importar_tramitacao_camara():
     """, (checkpoint_atual,))
     fila_proposicoes = cursor.fetchall()
 
+    # Reprocesso: proposições que falharam em execuções anteriores voltam à
+    # fila mesmo estando atrás do checkpoint.
+    pendentes = {int(c) for c in fila_erros.listar_pendentes() if str(c).isdigit()}
+    if pendentes:
+        placeholders = ",".join(["%s"] * len(pendentes))
+        cursor.execute(f"""
+            SELECT p.idProposicao, p.idApi FROM proposicao p
+            WHERE p.idProposicao IN ({placeholders}) AND p.idApi IS NOT NULL
+        """, tuple(pendentes))
+        fila_proposicoes = cursor.fetchall() + fila_proposicoes
+        logger.info(f"{len(pendentes)} proposições com erro pendente serão reprocessadas.")
+
     start_time = time.time()
 
     for id_interno, id_api in tqdm(fila_proposicoes, desc="Tramitações Câmara"):
@@ -45,7 +62,8 @@ def importar_tramitacao_camara():
             res = http_client.get_safe(url, timeout=30)
 
             if res.status_code != 200:
-                chk_manager.salvar(script_camara, id_interno)
+                if id_interno > checkpoint_atual:
+                    chk_manager.salvar(script_camara, id_interno)
                 db.commit()
                 continue
 
@@ -77,12 +95,18 @@ def importar_tramitacao_camara():
                         despacho = VALUES(despacho)
                 """, (id_api_tramitacao, id_interno, id_tipo, id_orgao, t.get("dataHora"), sequencia, t.get("descricaoTramitacao"), t.get("descricaoSituacao"), t.get("despacho")))
 
-            chk_manager.salvar(script_camara, id_interno)
+            # Um item reprocessado da fila de erros não pode regredir o cursor
+            if id_interno > checkpoint_atual:
+                chk_manager.salvar(script_camara, id_interno)
             db.commit()
+            if id_interno in pendentes:
+                fila_erros.resolver(id_interno)
             time.sleep(0.1)
 
-        except Exception:
+        except Exception as e:
             db.rollback()
+            logger.error(f"Erro ao importar tramitações da proposição {id_interno} ({id_api}): {e}")
+            fila_erros.registrar(id_interno, e)
             continue
 
 if __name__ == "__main__":
