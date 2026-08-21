@@ -21,6 +21,7 @@ from utils.checkpoint_manager import CheckpointManager
 from utils.etl_erro import EtlErro
 from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
+from utils.paralelo import buscar_lote, em_lotes
 
 logger = get_logger("ETL_Proposicao_Senado")
 
@@ -247,44 +248,47 @@ def processar_proposicoes_senado():
             # ── Fase 2: detalhes apenas para autoria de senador ──
             com_senador = [pr for pr in processos if 'Senador' in (pr.get('autoria') or '')]
             logger.info(f"   └─ Buscando detalhes de {len(com_senador)} processos com autoria de senador...")
-
-            for j, pr in enumerate(com_senador, 1):
+            itens_detalhe = []
+            for pr in com_senador:
                 id_processo = str(pr.get('id') or '')
-                codigo_materia = str(pr.get('codigoMateria') or id_processo)
-                id_proposicao_interno = map_proposicoes.get(codigo_materia)
-                if not id_processo or not id_proposicao_interno:
-                    continue
+                id_proposicao_interno = map_proposicoes.get(str(pr.get('codigoMateria') or id_processo))
+                if id_processo and id_proposicao_interno:
+                    itens_detalhe.append((id_processo, id_proposicao_interno))
 
-                detalhes = buscar_detalhes_processo_senado(id_processo)
-                if not detalhes:
-                    fila_erros.registrar(f"processo_{id_processo}", "detalhe indisponível")
-                    execucao.incrementar(erros=1)
-                    continue
+            # Detalhes em paralelo por lote; vínculos gravados sequencialmente.
+            j = 0
+            for lote in em_lotes(itens_detalhe):
+                respostas = buscar_lote(lote, lambda item: buscar_detalhes_processo_senado(item[0]))
+                garantir_conexao(conexao)
+                for (id_processo, id_proposicao_interno), detalhes in zip(lote, respostas):
+                    j += 1
+                    if isinstance(detalhes, Exception) or not detalhes:
+                        fila_erros.registrar(f"processo_{id_processo}", detalhes or "detalhe indisponível")
+                        execucao.incrementar(erros=1)
+                        continue
 
-                try:
-                    garantir_conexao(conexao)
-                    for codigo_autor in extrair_autores_senado(detalhes):
-                        id_autor = mapa_senadores.get(codigo_autor)
-                        if id_autor:
-                            cursor.execute(sql_autoria, (id_autor, id_proposicao_interno))
+                    try:
+                        for codigo_autor in extrair_autores_senado(detalhes):
+                            id_autor = mapa_senadores.get(codigo_autor)
+                            if id_autor:
+                                cursor.execute(sql_autoria, (id_autor, id_proposicao_interno))
 
-                    for a in detalhes.get('assuntos', []) or []:
-                        cod_tema = a.get('id') or a.get('codigo')
-                        id_tema = map_temas.get(int(cod_tema)) if cod_tema else None
-                        if id_tema:
-                            cursor.execute(sql_vincular_tema, (id_proposicao_interno, id_tema))
+                        for a in detalhes.get('assuntos', []) or []:
+                            cod_tema = a.get('id') or a.get('codigo')
+                            id_tema = map_temas.get(int(cod_tema)) if cod_tema else None
+                            if id_tema:
+                                cursor.execute(sql_vincular_tema, (id_proposicao_interno, id_tema))
 
-                    conexao.commit()
-                except Exception as e:
-                    conexao.rollback()
-                    logger.error(f"Erro ao vincular autores/temas do processo {id_processo}: {e}")
-                    fila_erros.registrar(f"processo_{id_processo}", e)
-                    execucao.incrementar(erros=1)
-                    sucesso_total = False
+                        conexao.commit()
+                    except Exception as e:
+                        conexao.rollback()
+                        logger.error(f"Erro ao vincular autores/temas do processo {id_processo}: {e}")
+                        fila_erros.registrar(f"processo_{id_processo}", e)
+                        execucao.incrementar(erros=1)
+                        sucesso_total = False
 
-                if j % 200 == 0:
-                    logger.info(f"      └─ {j}/{len(com_senador)} detalhes processados.")
-                time.sleep(0.2)
+                if j % 200 < len(lote):
+                    logger.info(f"      └─ {j}/{len(itens_detalhe)} detalhes processados.")
 
             execucao.incrementar(processados=len(processos), registros=gravadas)
             if sucesso_total:

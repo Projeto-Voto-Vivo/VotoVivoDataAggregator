@@ -9,6 +9,7 @@ from utils.etl_erro import EtlErro
 from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
+from utils.paralelo import buscar_lote, em_lotes
 
 logger = get_logger("ETL_Tramitacao_Camara")
 
@@ -26,11 +27,30 @@ execucao = ExecucaoEtl(db, script_camara)
 cursor.execute("SELECT idTipoTramitacao, idApi FROM tipoTramitacao")
 map_tipo = {str(row[1]): row[0] for row in cursor.fetchall()}
 
+SQL_TRAMITACAO = """
+    INSERT INTO tramitacao (idApi, idProposicao, idTipoTramitacao, idOrgao, dataHora, sequencia, descricaoTramitacao, descricaoSituacao, despacho)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    ON DUPLICATE KEY UPDATE
+        idTipoTramitacao = VALUES(idTipoTramitacao),
+        idOrgao = VALUES(idOrgao),
+        dataHora = VALUES(dataHora),
+        descricaoTramitacao = VALUES(descricaoTramitacao),
+        descricaoSituacao = VALUES(descricaoSituacao),
+        despacho = VALUES(despacho)
+"""
+
+
 def extrair_id(uri):
     try:
         return str(int(uri.split("/")[-1]))
-    except:
+    except Exception:
         return None
+
+
+def buscar_tramitacoes(item):
+    _, id_api = item
+    return http_client.get_safe(f"{BASE_URL_CAMARA}/proposicoes/{id_api}/tramitacoes", timeout=30)
+
 
 def importar_tramitacao_camara():
     checkpoint_atual = int(chk_manager.obter(script_camara, default_value="0"))
@@ -54,66 +74,70 @@ def importar_tramitacao_camara():
         logger.info(f"{len(pendentes)} proposições com erro pendente serão reprocessadas.")
 
     start_time = time.time()
+    barra = tqdm(total=len(fila_proposicoes), desc="Tramitações Câmara")
 
-    for id_interno, id_api in tqdm(fila_proposicoes, desc="Tramitações Câmara"):
+    # Fetch em paralelo por lote; gravação e checkpoint sequenciais, na ordem
+    # original da fila (o checkpoint assume ordem crescente de idProposicao).
+    for lote in em_lotes(fila_proposicoes):
         if tempo_limite_segundos > 0 and (time.time() - start_time) > tempo_limite_segundos:
             execucao.finalizar("INTERROMPIDO", "tempo limite atingido")
             break
 
-        try:
-            url = f"{BASE_URL_CAMARA}/proposicoes/{id_api}/tramitacoes"
-            res = http_client.get_safe(url, timeout=30)
-            garantir_conexao(db)
+        respostas = buscar_lote(lote, buscar_tramitacoes)
+        garantir_conexao(db)
 
-            if res.status_code != 200:
+        for (id_interno, id_api), res in zip(lote, respostas):
+            try:
+                if isinstance(res, Exception):
+                    raise res
+
+                if res.status_code != 200:
+                    if id_interno > checkpoint_atual:
+                        chk_manager.salvar(script_camara, id_interno)
+                    db.commit()
+                    continue
+
+                dados = res.json().get("dados", [])
+                dados.sort(key=lambda x: x.get("sequencia") or 0)
+
+                linhas = []
+                for t in dados:
+                    sequencia = t.get("sequencia")
+                    if not sequencia:
+                        continue
+                    id_tipo = map_tipo.get(str(t.get("codTipoTramitacao")))
+                    if id_tipo is None:
+                        continue
+
+                    # siglaOrgao vem na própria resposta: o placeholder nasce (ou
+                    # é corrigido) já com a sigla real em vez de 'N/A'.
+                    id_orgao = orgaos.garantir(extrair_id(t.get("uriOrgao")), t.get("siglaOrgao"))
+                    linhas.append((
+                        f"{id_api}_{sequencia}", id_interno, id_tipo, id_orgao, t.get("dataHora"),
+                        sequencia, t.get("descricaoTramitacao"), t.get("descricaoSituacao"), t.get("despacho"),
+                    ))
+
+                if linhas:
+                    cursor.executemany(SQL_TRAMITACAO, linhas)
+
+                # Um item reprocessado da fila de erros não pode regredir o cursor
                 if id_interno > checkpoint_atual:
                     chk_manager.salvar(script_camara, id_interno)
                 db.commit()
-                continue
+                if id_interno in pendentes:
+                    fila_erros.resolver(id_interno)
+                execucao.incrementar(processados=1, registros=len(linhas))
 
-            dados = res.json().get("dados", [])
-            dados.sort(key=lambda x: x.get("sequencia") or 0)
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Erro ao importar tramitações da proposição {id_interno} ({id_api}): {e}")
+                fila_erros.registrar(id_interno, e)
+                execucao.incrementar(erros=1)
 
-            for t in dados:
-                sequencia = t.get("sequencia")
-                if not sequencia:
-                    continue
+        barra.update(len(lote))
 
-                id_tipo = map_tipo.get(str(t.get("codTipoTramitacao")))
-                if id_tipo is None:
-                    continue
+    barra.close()
 
-                id_orgao_api = extrair_id(t.get("uriOrgao"))
-                id_orgao = orgaos.garantir(id_orgao_api)
-                id_api_tramitacao = f"{id_api}_{sequencia}"
-
-                cursor.execute("""
-                    INSERT INTO tramitacao (idApi, idProposicao, idTipoTramitacao, idOrgao, dataHora, sequencia, descricaoTramitacao, descricaoSituacao, despacho)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE
-                        idTipoTramitacao = VALUES(idTipoTramitacao),
-                        idOrgao = VALUES(idOrgao),
-                        dataHora = VALUES(dataHora),
-                        descricaoTramitacao = VALUES(descricaoTramitacao),
-                        descricaoSituacao = VALUES(descricaoSituacao),
-                        despacho = VALUES(despacho)
-                """, (id_api_tramitacao, id_interno, id_tipo, id_orgao, t.get("dataHora"), sequencia, t.get("descricaoTramitacao"), t.get("descricaoSituacao"), t.get("despacho")))
-
-            # Um item reprocessado da fila de erros não pode regredir o cursor
-            if id_interno > checkpoint_atual:
-                chk_manager.salvar(script_camara, id_interno)
-            db.commit()
-            if id_interno in pendentes:
-                fila_erros.resolver(id_interno)
-            execucao.incrementar(processados=1, registros=len(dados))
-            time.sleep(0.1)
-
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Erro ao importar tramitações da proposição {id_interno} ({id_api}): {e}")
-            fila_erros.registrar(id_interno, e)
-            execucao.incrementar(erros=1)
-            continue
 
 if __name__ == "__main__":
     try:
@@ -122,5 +146,6 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         execucao.finalizar("INTERROMPIDO")
     finally:
+        orgaos.fechar()
         cursor.close()
         db.close()

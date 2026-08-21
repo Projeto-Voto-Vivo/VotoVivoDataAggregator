@@ -90,7 +90,7 @@ python popular/principal.py
 | 6     | `tipoProposicao.py`                      | —                                    | Importa os tipos de proposição (PL, PEC, MPV…)                                                        |
 | 7     | `camara/tema_camara.py`                  | —                                    | Importa o catálogo de temas da Câmara                                                                 |
 | 8     | `senado/tema_senado.py`                  | —                                    | Importa os assuntos do Senado                                                                         |
-| 9     | `camara/orgao_camara.py`                 | `camara/parlamentar_camara.py`       | Importa órgãos/comissões da Câmara e a relação de membros                                             |
+| 9     | `camara/orgao_camara.py`                 | `camara/parlamentar_camara.py`       | Carrega o **catálogo completo** de órgãos da Câmara (`/orgaos`, ~1.700 em 17 requisições — inclui Plenário e CCP, que não têm membros) e a relação de membros |
 | 10    | `senado/orgao_senado.py`                 | `senado/parlamentar_senado.py`       | Importa órgãos/comissões do Senado e a relação de membros                                             |
 | 11    | `camara/proposicao_camara.py`            | `tipoProposicao`, `parlamentar_camara` | Importa proposições da Câmara a partir dos **dumps anuais** oficiais (cobertura completa: inclui proposições do Executivo, de comissões e de ex-parlamentares), com autores, temas e relações entre proposições (principal/anterior/posterior) |
 | 12    | `senado/proposicao_senado.py`            | `tipoProposicao`, `parlamentar_senado` | Importa **todos** os processos do Senado por ano (universo completo via listagem anual), com autores e assuntos para os de autoria de senador |
@@ -174,7 +174,7 @@ Para proteger o progresso contra retrabalho — reprocessar transformações sem
 | `gravar` | Toda resposta HTTP 200 é gravada em `ETL_HTTP_CACHE_DIR` (padrão `staging/http_cache`). |
 | `ler` | Respostas já em disco são servidas de lá (sem rede); o que faltar é buscado na API e gravado. |
 
-Fluxo típico: rodar a carga com `ETL_HTTP_CACHE=gravar`; se depois for preciso corrigir uma transformação e recarregar, apagar os checkpoints e rodar com `ETL_HTTP_CACHE=ler` — a recarga inteira sai do disco em minutos. O diretório `staging/` está no `.gitignore`.
+O `.env.example` já vem com `gravar` ligado — em produção, deixe assim. Fluxo típico: rodar a carga com `ETL_HTTP_CACHE=gravar`; se depois for preciso corrigir uma transformação e recarregar, apagar os checkpoints e rodar com `ETL_HTTP_CACHE=ler` — a recarga inteira sai do disco em minutos. O diretório `staging/` está no `.gitignore`.
 
 > **Atenção:** em modo `ler` os dados podem estar defasados em relação à API. Use-o para reprocessos, não para atualizar dados.
 
@@ -187,6 +187,10 @@ Todas as chamadas às APIs da Câmara e do Senado passam por `http_client.get_sa
 3. **429 persistente** — se mesmo após as tentativas normais a API continuar a bloquear, o script entra em pausas de segurança cada vez mais longas (5, 10 e 20 minutos). Se ainda assim continuar bloqueado, o script **é interrompido** (exceção `RateLimitAbort`) em vez de continuar a martelar a API ou ficar preso processando o resto dos dados às cegas.
 
 Se um script parar com `RateLimitAbort`, é seguro simplesmente rodá-lo de novo mais tarde — o checkpoint garante que ele retoma de onde parou.
+
+## Desempenho (fetch paralelo)
+
+Os scripts de maior volume (tramitações, votos, detalhes de votações e de processos do Senado, páginas de presença) buscam as respostas HTTP **em paralelo** (`utils/paralelo.py`: `ETL_WORKERS` threads, lotes de `ETL_TAMANHO_LOTE` itens) e gravam **sequencialmente, na ordem original da fila** — o checkpoint assume ordem crescente, e gravar fora de ordem faria uma retomada pular itens. Paralelismo amplifica a chance de HTTP 429; o `http_client` já trata isso com pausas crescentes, mas comece com 4 workers e observe o log. Escritas em lote (`executemany`) e um commit por entidade (deputado/proposição/votação) completam o ganho.
 
 ## Fontes de dados
 

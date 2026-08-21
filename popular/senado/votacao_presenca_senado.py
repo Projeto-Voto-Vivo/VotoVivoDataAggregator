@@ -271,6 +271,7 @@ def processar_votacoes_presencas_senado():
                 """
                 sql_presenca = "INSERT IGNORE INTO presenca (idParlamentar, idEvento, statusPresenca) VALUES (%s, %s, %s)"
 
+                linhas_voto, linhas_presenca = [], []
                 for v in votos_api:
                     if not isinstance(v, dict): continue
 
@@ -282,12 +283,10 @@ def processar_votacoes_presencas_senado():
 
                     if id_senador_api in map_senadores:
                         id_parlamentar_interno = map_senadores[id_senador_api]
-                        id_voto_api = f"{id_sessao}_{id_senador_api}"
-
-                        cursor.execute(sql_voto, (id_parlamentar_interno, id_votacao_interno, id_voto_api, voto_enum))
+                        linhas_voto.append((id_parlamentar_interno, id_votacao_interno, f"{id_sessao}_{id_senador_api}", voto_enum))
                         # A presença deriva do que o painel registrou: licença/missão
                         # vira JUSTIFICADA, "não compareceu" vira AUSENTE.
-                        cursor.execute(sql_presenca, (id_parlamentar_interno, id_evento_interno, presenca_do_voto(voto_enum)))
+                        linhas_presenca.append((id_parlamentar_interno, id_evento_interno, presenca_do_voto(voto_enum)))
                         senadores_no_painel.add(id_senador_api)
 
                 # 4. Faltas (Auditoria) — apenas senadores em exercício na data da
@@ -295,8 +294,14 @@ def processar_votacoes_presencas_senado():
                 ausentes = 0
                 for id_api, id_interno in map_senadores.items():
                     if id_api not in senadores_no_painel and em_exercicio(id_api, data_votacao):
-                        cursor.execute(sql_presenca, (id_interno, id_evento_interno, 'AUSENTE'))
+                        linhas_presenca.append((id_interno, id_evento_interno, 'AUSENTE'))
                         ausentes += 1
+
+                # Gravação em lote (uma votação pode ter ~80 votos + ~80 presenças)
+                if linhas_voto:
+                    cursor.executemany(sql_voto, linhas_voto)
+                if linhas_presenca:
+                    cursor.executemany(sql_presenca, linhas_presenca)
 
                 conexao.commit()
                 logger.info(f"      └─ Sucesso: {len(senadores_no_painel)} no painel | {ausentes} Ausentes.")
@@ -324,6 +329,7 @@ def processar_votacoes_presencas_senado():
         execucao.finalizar("FALHA")
         logger.warning("ETL terminou com falhas; checkpoint preservado para retomada. Execute novamente.")
 
+    orgaos.fechar()
     cursor.close()
     conexao.close()
     return sucesso_total

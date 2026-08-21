@@ -9,6 +9,7 @@ from utils.etl_erro import EtlErro
 from utils.execucao import ExecucaoEtl
 from utils.logging_config import get_logger
 from utils.orgao_cache import OrgaoCache
+from utils.paralelo import buscar_lote
 
 logger = get_logger("VotacaoETL")
 
@@ -105,12 +106,12 @@ def importar_votacoes_camara():
                     db.start_transaction()
 
                     inseridos_pagina = 0
-                    for v in dados:
-                        id_api = v.get("id")
-                        if not id_api: continue
-
+                    # Detalhes de toda a página em paralelo; gravação sequencial.
+                    ids_pagina = [v.get("id") for v in dados if v.get("id")]
+                    detalhes = buscar_lote(ids_pagina, lambda id_v: http_client.get_safe(f"{url}/{id_v}", timeout=60))
+                    for id_api, res_detalhe in zip(ids_pagina, detalhes):
                         try:
-                            res_detalhe = http_client.get_safe(f"{url}/{id_api}", timeout=60)
+                            if isinstance(res_detalhe, Exception): raise res_detalhe
                             if res_detalhe.status_code != 200: continue
                             v_detalhe = res_detalhe.json().get("dados", {})
 
@@ -173,7 +174,6 @@ def importar_votacoes_camara():
 
                     if len(dados) < 100: break
                     pagina += 1
-                    time.sleep(0.2)
 
                 except Exception as e:
                     logger.error(f"Erro no loop de paginação: {e}")
@@ -204,6 +204,7 @@ if __name__ == "__main__":
         if db.in_transaction: db.rollback()
         execucao.finalizar("FALHA", str(e))
     finally:
+        orgaos.fechar()
         cursor.close()
         db.close()
         logger.info("Conexão com o banco encerrada.")
