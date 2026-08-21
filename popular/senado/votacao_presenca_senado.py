@@ -145,9 +145,20 @@ def processar_votacoes_presencas_senado():
     proposicoes = cursor.fetchall()
     total_props = len(proposicoes)
 
-    cursor.execute("INSERT IGNORE INTO orgao (idApi, sigla, nome, tipoOrgao, casa) VALUES ('1001', 'PLEN-SF', 'Plenário do Senado Federal', 'Plenário', 'Senado')")
-    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '1001' AND casa = 'Senado'")
+    # Plenário do Senado = colegiado real 1998 (PLEN), o mesmo código que a
+    # tramitação (/processo) usa. Antes o script inventava um '1001' sintético;
+    # o que foi gravado com ele é migrado para o 1998 (idempotente).
+    cursor.execute("INSERT IGNORE INTO orgao (idApi, sigla, nome, tipoOrgao, casa) VALUES ('1998', 'PLEN', 'Plenário do Senado Federal', 'Plenário', 'Senado')")
+    cursor.execute("UPDATE orgao SET tipoOrgao = 'Plenário' WHERE idApi = '1998' AND casa = 'Senado' AND tipoOrgao IS NULL")
+    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '1998' AND casa = 'Senado'")
     id_plenario_senado = cursor.fetchone()['idOrgao']
+    cursor.execute("SELECT idOrgao FROM orgao WHERE idApi = '1001' AND casa = 'Senado'")
+    sintetico = cursor.fetchone()
+    if sintetico:
+        cursor.execute("UPDATE evento SET idOrgao = %s WHERE idOrgao = %s", (id_plenario_senado, sintetico['idOrgao']))
+        cursor.execute("UPDATE votacao SET idOrgao = %s WHERE idOrgao = %s", (id_plenario_senado, sintetico['idOrgao']))
+        cursor.execute("DELETE FROM orgao WHERE idOrgao = %s", (sintetico['idOrgao'],))
+        logger.info("Plenário sintético '1001' unificado no colegiado real 1998.")
     conexao.commit()
 
     # Períodos de exercício de cada senador: um senador só pode ser marcado

@@ -56,6 +56,7 @@ mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade_parte2.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_metricas.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_dados_mandato.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-20_orgao_nome.sql
+mysql -u <usuario> -p < popular/migrations/2026-08-21_fontes_substitutas.sql
 ```
 
 ### Banco de testes
@@ -96,12 +97,12 @@ python popular/principal.py
 | 11    | `camara/proposicao_camara.py`            | `tipoProposicao`, `parlamentar_camara` | Importa proposições da Câmara a partir dos **dumps anuais** oficiais (cobertura completa: inclui proposições do Executivo, de comissões e de ex-parlamentares), com autores, temas e relações entre proposições (principal/anterior/posterior) |
 | 12    | `senado/proposicao_senado.py`            | `tipoProposicao`, `parlamentar_senado` | Importa **todos** os processos do Senado por ano (universo completo via listagem anual), com autores e assuntos para os de autoria de senador |
 | 13    | `relacionarProposicaoCasas.py`           | `proposicao_camara`, `proposicao_senado` | Vincula a mesma matéria entre Câmara e Senado (numeração unificada) — a jornada bicameral da lei |
-| 14    | `camara/despesas_camara.py`              | `camara/parlamentar_camara.py`       | Importa despesas do mandato dos deputados (CEAP/verba de gabinete)                                    |
+| 14    | `camara/despesas_camara.py`              | `camara/parlamentar_camara.py`       | Importa despesas da Cota (CEAP) dos deputados a partir dos **arquivos oficiais anuais** (`camara.leg.br/cotas/Ano-{ano}.json.zip`) — independente da API, que está devolvendo vazio |
 | 15    | `senado/despesas_senado.py`              | `senado/parlamentar_senado.py`       | Importa despesas do mandato dos senadores (CEAPS)                                                     |
 | 16    | `emenda.py`                              | —                                    | Emendas parlamentares importadas do Portal da Transparência                                           |
 | 17    | `tipoTramitacao.py`                      | `proposicao_camara`, `proposicao_senado` | Importa os tipos de tramitação a partir do histórico das proposições já importadas                |
 | 18    | `camara/tramitacao_camara.py`            | `proposicao_camara`, `tipoTramitacao` | Importa o histórico de tramitação das proposições da Câmara                                         |
-| 19    | `senado/tramitacao_senado.py`            | `proposicao_senado`, `tipoTramitacao` | Importa o histórico de tramitação das proposições do Senado                                         |
+| 19    | `senado/tramitacao_senado.py`            | `proposicao_senado`                  | Importa a tramitação das matérias do Senado pela API nova (`/processo/{id}` → informes legislativos); o serviço legado foi desativado em 2026-02-01 |
 | 20    | `camara/evento_camara.py`                | `parlamentar_camara`, `orgao_camara` | Importa eventos e presenças em plenário/comissões da Câmara                                           |
 | 21    | `senado/votacao_presenca_senado.py`      | `parlamentar_senado`, `proposicao_senado`, `mandato_senado` | Importa votações nominais, votos e presenças do Senado (ausência só dentro do exercício do mandato) |
 | 22    | `camara/votacao_camara.py`               | `proposicao_camara`, `orgao_camara`  | Importa votações nominais da Câmara                                                                   |
