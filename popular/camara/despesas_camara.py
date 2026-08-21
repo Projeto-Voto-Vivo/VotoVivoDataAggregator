@@ -1,19 +1,22 @@
 """Importa as despesas da Cota Parlamentar (CEAP) dos deputados a partir dos
-ARQUIVOS OFICIAIS anuais da Câmara (www.camara.leg.br/cotas/Ano-{ano}.json.zip).
+ARQUIVOS OFICIAIS anuais da Câmara (www.camara.leg.br/cotas/Ano-{ano}.csv.zip).
 
-Um arquivo por ano (~9 MB zipado, ~100 mil lançamentos) substitui as milhares
-de chamadas por deputado/mês à API /deputados/{id}/despesas — que além de
-lentas ficaram indisponíveis (HTTP 200 com `dados: []` para tudo). O arquivo
-traz numeroDeputadoID (= id do deputado na API) e idDocumento (chave natural).
+Um arquivo por ano (~7 MB zipado, ~100-250 mil lançamentos) substitui as
+milhares de chamadas por deputado/mês à API /deputados/{id}/despesas — que
+além de lentas ficaram indisponíveis (HTTP 200 com `dados: []` para tudo).
+
+Usa-se a versão CSV, não a JSON: só o CSV traz `ideCadastro` (o id do deputado
+na API, o mesmo de parlamentar.idApi). O JSON traz apenas `numeroDeputadoID`,
+que é o número interno da Cota e não casa com nada na base.
 
 Checkpoint = último ano concluído; ao concluir, o cursor é reposicionado em
 ano_atual-1 para que execuções seguintes façam apenas o refresh do ano
 corrente (o arquivo do ano em curso é atualizado pela Câmara continuamente).
 """
 
+import csv
 import hashlib
 import io
-import json
 import os
 import sys
 import time
@@ -30,7 +33,7 @@ from utils.logging_config import get_logger
 
 logger = get_logger("ETL_Despesas_Camara")
 
-URL_ARQUIVO = "https://www.camara.leg.br/cotas/Ano-{ano}.json.zip"
+URL_ARQUIVO = "https://www.camara.leg.br/cotas/Ano-{ano}.csv.zip"
 TAMANHO_LOTE = 1000
 
 is_test_mode = os.getenv("TEST_MODE", "False").lower() == "true"
@@ -51,9 +54,17 @@ SQL_DESPESA = """
 """
 
 
+def ler_csv_cota(conteudo_zip):
+    """Descompacta o zip e devolve os lançamentos como lista de dicts (CSV ';')."""
+    with zipfile.ZipFile(io.BytesIO(conteudo_zip)) as zf:
+        nome = next((n for n in zf.namelist() if n.lower().endswith(".csv")), zf.namelist()[0])
+        texto = zf.read(nome).decode("utf-8-sig", errors="replace")
+    return list(csv.DictReader(io.StringIO(texto), delimiter=";"))
+
+
 def baixar_arquivo_anual(ano, ano_atual):
-    """Baixa e descompacta o JSON anual da Cota. Devolve a lista de lançamentos,
-    [] se o arquivo do ano corrente ainda não existe, ou None em falha real.
+    """Baixa o CSV anual da Cota. Devolve a lista de lançamentos, [] se o
+    arquivo do ano corrente ainda não existe, ou None em falha real.
     Usa http_client.get (sem o cache de texto): o conteúdo é binário."""
     url = URL_ARQUIVO.format(ano=ano)
     logger.info(f"Baixando arquivo anual da Cota: {url}")
@@ -66,11 +77,7 @@ def baixar_arquivo_anual(ano, ano_atual):
         logger.error(f"Falha ao baixar {url} (HTTP {resp.status_code})")
         return None
 
-    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-        nome = next((n for n in zf.namelist() if n.lower().endswith(".json")), zf.namelist()[0])
-        dados = json.loads(zf.read(nome).decode("utf-8-sig"))
-
-    lancamentos = dados.get("dados", []) if isinstance(dados, dict) else dados
+    lancamentos = ler_csv_cota(resp.content)
     logger.info(f"   └─ {len(lancamentos)} lançamentos em {ano}.")
     return lancamentos
 
@@ -102,14 +109,14 @@ def converter_data(data):
 
 
 def chave_natural_despesa(d):
-    """idDocumento é o código do documento fiscal (o mesmo usado na URL do PDF e
+    """ideDocumento é o código do documento fiscal (o mesmo usado na URL do PDF e
     no codDocumento da API). Sem ele, hash determinístico dos campos estáveis."""
-    id_doc = d.get("idDocumento")
+    id_doc = (d.get("ideDocumento") or "").strip()
     if id_doc:
         return f"CAM_{id_doc}"
     base = "|".join(str(v) for v in (
-        d.get("numeroDeputadoID"), d.get("dataEmissao"), d.get("valorLiquido"),
-        d.get("cnpjCPF"), d.get("numero"), d.get("descricao"),
+        d.get("ideCadastro"), d.get("datEmissao"), d.get("vlrLiquido"),
+        d.get("txtCNPJCPF"), d.get("txtNumero"), d.get("txtDescricao"),
     ))
     return "CAMH_" + hashlib.sha1(base.encode("utf-8")).hexdigest()
 
@@ -155,26 +162,39 @@ def processar_despesas_camara():
             mes_min = MES_INICIO if ano == ANO_INICIO else 1
             mes_max = mes_atual if ano == ano_atual else 12
 
-            linhas, ignorados_sem_deputado, fora_janela = [], 0, 0
+            linhas, sem_deputado_na_base, fora_janela = [], 0, 0
             for d in lancamentos:
-                id_parlamentar = map_deputados.get(str(d.get("numeroDeputadoID") or ""))
+                id_parlamentar = map_deputados.get((d.get("ideCadastro") or "").strip())
                 if not id_parlamentar:
-                    ignorados_sem_deputado += 1   # lideranças, ex-deputados fora da base etc.
+                    # lideranças (sem ideCadastro) e deputados que não estão na base
+                    sem_deputado_na_base += 1
                     continue
-                mes = int(d.get("mes") or 0)
+                try:
+                    mes = int(d.get("numMes") or 0)
+                except ValueError:
+                    mes = 0
                 if mes and not (mes_min <= mes <= mes_max):
                     fora_janela += 1
                     continue
+                cnpj = (d.get("txtCNPJCPF") or "").strip()
                 linhas.append((
                     chave_natural_despesa(d),
                     id_parlamentar,
-                    converter_data(d.get("dataEmissao")),
-                    converter_valor(d.get("valorLiquido")),
-                    (d.get("fornecedor") or None),
-                    (str(d.get("cnpjCPF")).strip() or None) if d.get("cnpjCPF") else None,
-                    (d.get("urlDocumento") or None),
-                    (d.get("descricao") or None),
+                    converter_data(d.get("datEmissao")),
+                    converter_valor(d.get("vlrLiquido")),
+                    (d.get("txtFornecedor") or "").strip() or None,
+                    cnpj[:20] or None,
+                    (d.get("urlDocumento") or "").strip() or None,
+                    (d.get("txtDescricao") or "").strip() or None,
                 ))
+
+            if lancamentos and not linhas:
+                # Arquivo com conteúdo mas nenhuma linha vinculável: quase certamente
+                # o layout mudou. Não avançar o checkpoint "com sucesso" nesse caso.
+                raise RuntimeError(
+                    f"nenhum dos {len(lancamentos)} lançamentos casou com deputados da base — "
+                    f"verifique o layout do CSV (coluna ideCadastro) antes de prosseguir"
+                )
 
             garantir_conexao(db)
             for i in range(0, len(linhas), TAMANHO_LOTE):
@@ -184,7 +204,7 @@ def processar_despesas_camara():
             total_gravado += len(linhas)
             logger.info(
                 f"   └─ {len(linhas)} despesas gravadas/atualizadas "
-                f"({ignorados_sem_deputado} de não-deputados ignoradas, {fora_janela} fora da janela)."
+                f"({sem_deputado_na_base} sem deputado na base, {fora_janela} fora da janela)."
             )
             execucao.incrementar(processados=len(lancamentos), registros=len(linhas))
             chk_manager.salvar(nome_script, str(ano))

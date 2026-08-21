@@ -18,7 +18,12 @@ DELETE FROM etlErro       WHERE nomeScript = 'popular/tramitacao.py#senado';
 -- 2. Despesas da Câmara: a API /deputados/{id}/despesas está devolvendo vazio;
 --    o script passa a usar os arquivos oficiais anuais da Cota. O checkpoint
 --    antigo avançou sem dados e não deve ser reaproveitado.
+--    (o #camara_arquivos_v4 entra porque a 1ª versão lia o JSON da Cota, cujo
+--    numeroDeputadoID não é o id da API — avançou "com sucesso" e zero linhas;
+--    a versão atual lê o CSV, que traz ideCadastro.)
 DELETE FROM etlCheckpoint WHERE nomeScript IN (
     'popular/despesas.py#camara_dinamico_v2',
-    'popular/despesas.py#camara_dinamico_v3'
+    'popular/despesas.py#camara_dinamico_v3',
+    'popular/despesas.py#camara_arquivos_v4'
 );
+DELETE FROM etlErro WHERE nomeScript = 'popular/despesas.py#camara_arquivos_v4';
