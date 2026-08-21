@@ -5,6 +5,7 @@ import time
 
 from utils.db import get_connection
 from utils.checkpoint_manager import CheckpointManager
+from utils.cache_cdn import purgar_cdn
 
 PIPELINE_SCRIPTS = [
     "camara/parlamentar_camara.py",
@@ -79,9 +80,9 @@ def executar_script(script_name):
 
 def main():
     print("🌟 INICIANDO CARGA COMPLETA DO BANCO VOTO VIVO (VIA POPULAR) 🌟")
-    
+
     ultimo_concluido = obter_ultimo_script_concluido()
-    
+
     if ultimo_concluido and ultimo_concluido in PIPELINE_SCRIPTS:
         indice_proximo = PIPELINE_SCRIPTS.index(ultimo_concluido) + 1
         fila_execucao = PIPELINE_SCRIPTS[indice_proximo:]
@@ -94,29 +95,33 @@ def main():
     print(f"Total de scripts a serem processados nesta rodada: {len(fila_execucao)}")
     pipeline_start = time.time()
 
-    for script in fila_execucao:
-        sucesso = executar_script(script)
+    algum_script_concluiu = False
 
-        if not sucesso:
-            print("\n🛑 PIPELINE INTERROMPIDO devido a uma falha crítica em um dos módulos.")
-            cursor.close()
-            db.close()
-            sys.exit(1)
-            
-        salvar_checkpoint_pipeline(script)
+    try:
+        for script in fila_execucao:
+            sucesso = executar_script(script)
 
-    # Se o pipeline chegar ao fim com sucesso, limpa o checkpoint para uma futura nova carga geral
-    cursor.execute("DELETE FROM etlCheckpoint WHERE nomeScript = %s", (IDENTIFICADOR_ORQUESTRADOR,))
-    db.commit()
+            if not sucesso:
+                print("\n🛑 PIPELINE INTERROMPIDO devido a uma falha crítica em um dos módulos.")
+                sys.exit(1)
 
-    total_duration = time.time() - pipeline_start
-    print("\n==================================================")
-    print(f"🎉 PARABÉNS! Todo o banco de dados foi populado!")
-    print(f"⏱️ Tempo total de execução desta rodada: {total_duration/60:.2f} minutos.")
-    print("==================================================")
+            algum_script_concluiu = True
+            salvar_checkpoint_pipeline(script)
 
-    cursor.close()
-    db.close()
+        cursor.execute("DELETE FROM etlCheckpoint WHERE nomeScript = %s", (IDENTIFICADOR_ORQUESTRADOR,))
+        db.commit()
+
+        total_duration = time.time() - pipeline_start
+        print("\n==================================================")
+        print(f"🎉 PARABÉNS! Todo o banco de dados foi populado!")
+        print(f"⏱️ Tempo total de execução desta rodada: {total_duration/60:.2f} minutos.")
+        print("==================================================")
+    finally:
+        if algum_script_concluiu:
+            purgar_cdn()
+
+        cursor.close()
+        db.close()
 
 
 if __name__ == "__main__":
