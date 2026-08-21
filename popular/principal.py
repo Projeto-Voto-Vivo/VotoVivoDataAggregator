@@ -11,6 +11,7 @@ PIPELINE_SCRIPTS = [
     "camara/parlamentar_camara.py",
     "senado/parlamentar_senado.py",
     "partidos.py",
+    "camara/bloco_camara.py",
     "camara/historico_parlamentar_camara.py",
     "senado/mandato_senado.py",
     "tipoProposicao.py",

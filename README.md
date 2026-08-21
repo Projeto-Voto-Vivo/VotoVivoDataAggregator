@@ -57,6 +57,7 @@ mysql -u <usuario> -p < popular/migrations/2026-08-19_metricas.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_dados_mandato.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-20_orgao_nome.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-21_fontes_substitutas.sql
+mysql -u <usuario> -p < popular/migrations/2026-08-21_blocos.sql
 ```
 
 ### Banco de testes
@@ -87,7 +88,8 @@ python popular/principal.py
 | 1     | `camara/parlamentar_camara.py`           | —                                    | Importa deputados, gabinete, redes sociais e condição de mandato (Titular/Suplente/Afastado)          |
 | 2     | `senado/parlamentar_senado.py`           | —                                    | Importa senadores e condição de mandato                                                               |
 | 3     | `partidos.py`                            | —                                    | Importa o catálogo de partidos                                                                        |
-| 4     | `camara/historico_parlamentar_camara.py` | `camara/parlamentar_camara.py`       | Histórico dos deputados: filiações partidárias e períodos de exercício do mandato                     |
+| 4     | `camara/bloco_camara.py`                 | `partidos.py`                        | Blocos parlamentares e federações da Câmara com a composição de partidos (`/blocos`); base para resolver a orientação de bancada até o partido do deputado |
+| 4b    | `camara/historico_parlamentar_camara.py` | `camara/parlamentar_camara.py`       | Histórico dos deputados: filiações partidárias e períodos de exercício do mandato                     |
 | 5     | `senado/mandato_senado.py`               | `senado/parlamentar_senado.py`       | Mandatos dos senadores: períodos de exercício e filiações partidárias                                 |
 | 6     | `tipoProposicao.py`                      | —                                    | Importa os tipos de proposição (PL, PEC, MPV…)                                                        |
 | 7     | `camara/tema_camara.py`                  | —                                    | Importa o catálogo de temas da Câmara                                                                 |
@@ -106,7 +108,7 @@ python popular/principal.py
 | 20    | `camara/evento_camara.py`                | `parlamentar_camara`, `orgao_camara` | Importa eventos e presenças em plenário/comissões da Câmara                                           |
 | 21    | `senado/votacao_presenca_senado.py`      | `parlamentar_senado`, `proposicao_senado`, `mandato_senado` | Importa votações nominais, votos e presenças do Senado (ausência só dentro do exercício do mandato) |
 | 22    | `camara/votacao_camara.py`               | `proposicao_camara`, `orgao_camara`  | Importa votações nominais da Câmara                                                                   |
-| 23    | `camara/orientacao_camara.py`            | `camara/votacao_camara.py`           | Importa a orientação das bancadas em cada votação da Câmara (dumps anuais) — "seguiu o partido?"      |
+| 23    | `camara/orientacao_camara.py`            | `camara/votacao_camara.py`, `bloco_camara` | Importa a orientação das bancadas em cada votação da Câmara (dumps anuais) e **resolve** cada bancada para `idBloco` (blocos/federações, por casamento determinístico da abreviação) ou `siglaPartido` — "seguiu o partido?" |
 | 24    | `voto.py`                                | `camara/votacao_camara.py`, `parlamentar` | Importa os votos individuais de cada deputado                                                    |
 | 25    | `relacionarEmendaParlamentar.py`         | `emenda`, `parlamentar`              | Vincula emendas a parlamentares por correspondência de nome (autor da emenda não vem com FK na API)   |
 

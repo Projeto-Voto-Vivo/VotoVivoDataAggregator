@@ -62,6 +62,31 @@ CREATE TABLE partido (
     urlLogo VARCHAR(500) NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Blocos parlamentares e federações da Câmara (/blocos). A composição é
+-- a base para resolver a orientação "Bl ..."/"Fdr ..." de uma votação até o
+-- partido do deputado (pertencimento).
+CREATE TABLE bloco (
+    idBloco INT AUTO_INCREMENT PRIMARY KEY,
+    idApi VARCHAR(50) NOT NULL,
+    casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL DEFAULT 'Camara',
+    nome VARCHAR(255),
+    idLegislatura INT NULL,
+    federacao TINYINT(1) NOT NULL DEFAULT 0,
+    UNIQUE KEY unique_bloco_api (idApi, casa)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- ordem = posição do partido no nome do bloco (a abreviação usada nas
+-- orientações segue essa ordem); NULL para partidos que só o endpoint listou.
+CREATE TABLE blocoPartido (
+    idBlocoPartido INT AUTO_INCREMENT PRIMARY KEY,
+    idBloco INT NOT NULL,
+    siglaPartido VARCHAR(50) NOT NULL,
+    idApiPartido VARCHAR(50) NULL,
+    ordem INT NULL,
+    FOREIGN KEY (idBloco) REFERENCES bloco(idBloco) ON DELETE CASCADE,
+    UNIQUE KEY unique_bloco_partido (idBloco, siglaPartido)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE filiacaoPartidaria (
     idFiliacao INT AUTO_INCREMENT PRIMARY KEY,
     idParlamentar INT NOT NULL,
@@ -189,7 +214,13 @@ CREATE TABLE orientacaoVotacao (
     idVotacao INT NOT NULL,
     siglaBancada VARCHAR(100) NOT NULL,
     orientacao VARCHAR(50) NULL,
+    -- Resolução da bancada (preenchida pelo ETL a partir de bloco/partido):
+    -- idBloco para "Bl ..." e "Fdr ...", siglaPartido para bancada de partido;
+    -- ambos NULL para Governo/Maioria/Minoria/Oposição ou quando não resolvível.
+    idBloco INT NULL,
+    siglaPartido VARCHAR(50) NULL,
     FOREIGN KEY (idVotacao) REFERENCES votacao(idVotacao) ON DELETE CASCADE,
+    FOREIGN KEY (idBloco) REFERENCES bloco(idBloco) ON DELETE SET NULL,
     UNIQUE KEY unique_orientacao_votacao (idVotacao, siglaBancada)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
