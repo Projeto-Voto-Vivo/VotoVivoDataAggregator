@@ -26,6 +26,14 @@ SQL_ORGAO = """
 SQL_MEMBRO = "INSERT IGNORE INTO membroOrgao (idParlamentar, idOrgao, cargo) VALUES (%s, %s, %s)"
 
 
+def truncar(valor, tamanho):
+    """Garante que o valor cabe na coluna (nomes de comissões especiais chegam a ~800 chars)."""
+    if valor is None:
+        return None
+    valor = str(valor)
+    return valor[:tamanho] if len(valor) > tamanho else valor
+
+
 # ---------------------------------------------------------
 # 1. CATÁLOGO COMPLETO DE ÓRGÃOS
 # ---------------------------------------------------------
@@ -51,7 +59,7 @@ def carregar_catalogo_orgaos(cursor, conexao):
             break
 
         linhas += [
-            (str(o['id']), o.get('sigla'), o.get('nome'), o.get('tipoOrgao'))
+            (str(o['id']), (o.get('sigla') or None), truncar(o.get('nome'), 1000), truncar(o.get('tipoOrgao'), 100))
             for o in dados if o.get('id')
         ]
         pagina += 1
@@ -135,7 +143,7 @@ def processar_orgaos_camara():
 
                 if id_orgao_api not in map_orgaos:
                     orgaos_fora_catalogo[id_orgao_api] = (
-                        id_orgao_api, org_basico.get('siglaOrgao'), org_basico.get('nomeOrgao'), None,
+                        id_orgao_api, org_basico.get('siglaOrgao'), truncar(org_basico.get('nomeOrgao'), 1000), None,
                     )
                 membros.append((id_parlamentar, id_orgao_api, cargo_parlamentar))
 

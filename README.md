@@ -55,6 +55,7 @@ mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_integridade_parte2.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_metricas.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-19_dados_mandato.sql
+mysql -u <usuario> -p < popular/migrations/2026-08-20_orgao_nome.sql
 ```
 
 ### Banco de testes

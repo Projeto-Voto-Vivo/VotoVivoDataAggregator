@@ -129,7 +129,8 @@ CREATE TABLE orgao (
     idOrgao INT AUTO_INCREMENT PRIMARY KEY,
     idApi VARCHAR(50) NOT NULL,
     sigla VARCHAR(50),
-    nome VARCHAR(500),
+    -- Comissões especiais da Câmara têm nomes de até ~800 caracteres
+    nome VARCHAR(1000),
     casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL,
     tipoOrgao VARCHAR(100) NULL,
     UNIQUE KEY unique_orgao_api (idApi, casa)

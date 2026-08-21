@@ -1,6 +1,13 @@
 from utils.db import get_connection
 
 
+def _limitar(valor, tamanho):
+    if valor is None:
+        return None
+    valor = str(valor)
+    return valor[:tamanho] if len(valor) > tamanho else valor
+
+
 class OrgaoCache:
     """Resolve idApi -> idOrgao de uma casa, criando um placeholder quando o
     órgão ainda não é conhecido.
@@ -56,7 +63,7 @@ class OrgaoCache:
                 self.cursor.execute(
                     """UPDATE orgao SET sigla = COALESCE(%s, sigla), nome = COALESCE(%s, nome)
                        WHERE idOrgao = %s AND (sigla = 'N/A' OR nome LIKE 'Órgão não mapeado%%')""",
-                    (sigla, nome, id_orgao),
+                    (_limitar(sigla, 50), _limitar(nome, 1000), id_orgao),
                 )
                 self.db.commit()
                 if sigla and nome:
@@ -65,7 +72,8 @@ class OrgaoCache:
 
         self.cursor.execute(
             "INSERT INTO orgao (idApi, sigla, nome, casa) VALUES (%s, %s, %s, %s)",
-            (id_api_str, sigla or "N/A", nome or f"Órgão não mapeado ({sigla or id_api_str})", self.casa),
+            (id_api_str, _limitar(sigla, 50) or "N/A",
+             _limitar(nome, 1000) or f"Órgão não mapeado ({sigla or id_api_str})", self.casa),
         )
         self.db.commit()
         id_novo = self.cursor.lastrowid
