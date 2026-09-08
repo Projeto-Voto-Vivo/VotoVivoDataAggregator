@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -19,7 +20,70 @@ tempo_limite_segundos = int(os.getenv("MAX_TIME_SECONDS", "0"))
 TAMANHO_LOTE = 500
 
 # ---------------------------------------------------------
-# 1. FUNÇÕES DE PRÉ-SINCRONIZAÇÃO (REFERÊNCIAS)
+# 1. FUNÇÃO DE NORMALIZAÇÃO DE EMENTA (NLP LEVE)
+# ---------------------------------------------------------
+def gerar_resumo_indutivo(ementa: str | None, sigla_tipo: str | None = None) -> str:
+    """
+    Transforma ementas legislativas em descrições curtas e intuitivas.
+    Prioriza: objetivo direto > tema central > fallback seguro.
+    """
+    if not ementa:
+        return "Sem descrição detalhada cadastrada."
+
+    texto = ementa.strip()
+    if not texto:
+        return "Sem descrição detalhada cadastrada."
+
+    # 1. Extrair propósito (cláusulas de finalidade)
+    # Ex: "Altera a Lei nº 13.146... para prever garantias..." -> "Garantias aos candidatos..."
+    match_para = re.search(
+        r'\b(?:para|a fim de|com o objetivo de|com vistas a)\s+(.*)',
+        texto,
+        re.IGNORECASE
+    )
+    if match_para:
+        resumo = match_para.group(1).strip()
+        if len(resumo) >= 12:
+            return resumo[0].upper() + resumo[1:]
+
+    # 2. Remover prefixos burocráticos comuns
+    prefixos = [
+        r"^\s*(?:dispõe sobre|institui|cria|autoriza|regulamenta|estabelece|altera|modifica|acrescenta|dá nova redação|revoga)\s+",
+        r"^\s*(?:define|fixa|determina|obriga|vedar|proíbe|permite|concede|institui o|cria o|cria a)\s+"
+    ]
+    for pref in prefixos:
+        if re.match(pref, texto, re.IGNORECASE):
+            texto_limpo = re.sub(pref, "", texto, flags=re.IGNORECASE).strip()
+            texto_limpo = texto_limpo.rstrip(".;:,")
+            if len(texto_limpo) >= 8:
+                return texto_limpo[0].upper() + texto_limpo[1:]
+
+    # 3. Casos especiais: Requerimentos, Audiências, Indicações
+    if sigla_tipo:
+        sigla = sigla_tipo.upper()
+        if sigla in ("REQ", "RQ"):
+            match_debater = re.search(
+                r'\bdebater\s+(.+?)(?:\s*sobre\s+|\s+no\s+|\s+referente\s+|\s+relativo\s+|\s+concernente\s+|\.$)',
+                texto,
+                re.IGNORECASE
+            )
+            if match_debater:
+                return f"Debater: {match_debater.group(1).strip()}"
+        if sigla in ("AP", "AUD"):
+            match_tema = re.search(r'\bdebater\s+(.+)', texto, re.IGNORECASE)
+            if match_tema:
+                return f"Audiência Pública: {match_tema.group(1).strip()}"
+        if sigla in ("IND", "INDICAÇÃO"):
+            match_solicitar = re.search(r'\bsolicita\s+(.+)', texto, re.IGNORECASE)
+            if match_solicitar:
+                return f"Solicita: {match_solicitar.group(1).strip()}"
+
+    # 4. Fallback: manter ementa original, mas limpa
+    texto = re.sub(r"\s+", " ", texto).strip()
+    return texto[0].upper() + texto[1:] if texto else "Sem descrição detalhada cadastrada."
+
+# ---------------------------------------------------------
+# 2. FUNÇÕES DE PRÉ-SINCRONIZAÇÃO (REFERÊNCIAS)
 # ---------------------------------------------------------
 def sincronizar_tipos_proposicao(conexao):
     cursor = conexao.cursor(buffered=True)
@@ -74,7 +138,7 @@ def sincronizar_temas(conexao):
     return mapa_temas
 
 # ---------------------------------------------------------
-# 2. DUMPS ANUAIS (dadosabertos.camara.leg.br/arquivos)
+# 3. DUMPS ANUAIS (dadosabertos.camara.leg.br/arquivos)
 # ---------------------------------------------------------
 def baixar_dump_anual(recurso, ano, ano_atual):
     """Baixa o dump anual completo da Câmara. Um único arquivo cobre TODAS as
@@ -114,7 +178,7 @@ def executar_em_lotes(conexao, cursor, sql, linhas):
     return total
 
 # ---------------------------------------------------------
-# 3. CARGA
+# 4. CARGA
 # ---------------------------------------------------------
 def processar_proposicoes_camara():
     conexao, cursor = get_connection(buffered=True)
@@ -185,9 +249,10 @@ def processar_proposicoes_camara():
                 status_atual = (p.get('ultimoStatus') or {}).get('descricaoSituacao')
                 data_raw = p.get('dataApresentacao')
                 data_apresentacao = data_raw.replace('T', ' ')[:19] if data_raw else None
+                ementa_limpa = gerar_resumo_indutivo(p.get('ementa'), p.get('siglaTipo'))
                 linhas.append((
                     id_prop_api, map_tipos.get(p.get('siglaTipo')), p.get('numero'),
-                    p.get('ano'), p.get('ementa'), status_atual, data_apresentacao,
+                    p.get('ano'), ementa_limpa, status_atual, data_apresentacao,
                 ))
 
                 for campo, tipo_relacao in CAMPOS_RELACAO:

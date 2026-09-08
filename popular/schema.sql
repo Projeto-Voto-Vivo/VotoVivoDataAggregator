@@ -54,6 +54,28 @@ CREATE TABLE parlamentar (
     condicao_mandato VARCHAR(50) DEFAULT 'Titular'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE candidaturaTse (
+    idCandidaturaTse INT AUTO_INCREMENT PRIMARY KEY,
+    idParlamentar INT NOT NULL,
+    sqCandidato VARCHAR(50) NOT NULL,
+    anoEleicao INT NOT NULL,
+    descricaoEleicao VARCHAR(255),
+    uf CHAR(2),
+    cargo VARCHAR(100),
+    numeroCandidato VARCHAR(20),
+    nomeUrna VARCHAR(255),
+    nomeCivil VARCHAR(255),
+    siglaPartido VARCHAR(50),
+    situacaoCandidatura VARCHAR(100),
+    resultadoEleicao VARCHAR(100),
+    FOREIGN KEY (idParlamentar)
+        REFERENCES parlamentar(idParlamentar)
+        ON DELETE CASCADE,
+    UNIQUE KEY unique_candidatura_ano_sq (anoEleicao, sqCandidato),
+    INDEX idx_candidatura_parlamentar (idParlamentar),
+    INDEX idx_candidatura_ano (anoEleicao)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE partido (
     idPartido INT AUTO_INCREMENT PRIMARY KEY,
     idApi VARCHAR(50) NULL,
