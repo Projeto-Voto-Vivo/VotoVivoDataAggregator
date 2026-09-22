@@ -56,7 +56,7 @@ CREATE TABLE parlamentar (
 
 CREATE TABLE candidaturaTse (
     idCandidaturaTse INT AUTO_INCREMENT PRIMARY KEY,
-    idParlamentar INT NOT NULL,
+    idParlamentar INT,
     sqCandidato VARCHAR(50) NOT NULL,
     anoEleicao INT NOT NULL,
     descricaoEleicao VARCHAR(255),
