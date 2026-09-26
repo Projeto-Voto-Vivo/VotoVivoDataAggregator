@@ -137,9 +137,12 @@ def processar_e_inserir_dataframe(df: pd.DataFrame, mapa_parlamentares: dict, cu
     return len(registros), vinculos_encontrados
 
 
-def popular_candidaturas_tse(url_download: str = URL_TSE_CANDIDATOS_2026, ano_eleicao: int = 2026):
-    """Baixa o zip do TSE e popula a tabela candidaturaTse."""
-    logger.info(f"Conectando ao repositorio do TSE: {url_download}")
+def popular_candidaturas_tse(url_download: str = URL_TSE_CANDIDATOS_2026, ano_eleicao: int = 2026, arquivo_zip: str = None):
+    """Baixa o zip do TSE (ou le arquivo_zip local) e popula a tabela candidaturaTse."""
+    if arquivo_zip:
+        logger.info(f"Usando arquivo local: {arquivo_zip}")
+    else:
+        logger.info(f"Conectando ao repositorio do TSE: {url_download}")
 
     # Desempacota conn e cursor tratando retorno como tupla ou objeto individual
     db_res = get_connection()
@@ -153,11 +156,16 @@ def popular_candidaturas_tse(url_download: str = URL_TSE_CANDIDATOS_2026, ano_el
         logger.info("Carregando lista de parlamentares para matching...")
         mapa_parlamentares = carregar_mapa_parlamentares(cursor)
 
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        response = requests.get(url_download, headers=headers, stream=True, timeout=120)
-        response.raise_for_status()
+        if arquivo_zip:
+            origem_zip = arquivo_zip
+        else:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            response = requests.get(url_download, headers=headers, stream=True, timeout=120)
+            response.raise_for_status()
+            origem_zip = io.BytesIO(response.content)
+            logger.info("Download concluido.")
 
-        logger.info("Download concluido. Processando arquivos CSV em memoria...")
+        logger.info("Processando arquivos CSV...")
 
         colunas_necessarias = [
             "SQ_CANDIDATO",
@@ -175,7 +183,7 @@ def popular_candidaturas_tse(url_download: str = URL_TSE_CANDIDATOS_2026, ano_el
         total_inseridos = 0
         total_vinculados = 0
 
-        with zipfile.ZipFile(io.BytesIO(response.content)) as z:
+        with zipfile.ZipFile(origem_zip) as z:
             arquivos_csv = [f for f in z.namelist() if f.endswith(".csv")]
             arquivos_brasil = [f for f in arquivos_csv if "BRASIL" in f.upper()]
             arquivos_alvo = arquivos_brasil if arquivos_brasil else arquivos_csv
@@ -202,6 +210,8 @@ def popular_candidaturas_tse(url_download: str = URL_TSE_CANDIDATOS_2026, ano_el
 
     except requests.exceptions.RequestException as req_err:
         logger.error(f"Erro ao baixar dados do TSE: {req_err}")
+        logger.error("Se o CDN do TSE bloquear o servidor, baixe o zip pelo navegador e rode: "
+                     "python popular/candidaturaTse.py <caminho/consulta_cand_2026.zip>")
     except Exception as e:
         conn.rollback()
         logger.error(f"Erro inesperado no pipeline do TSE: {e}")
@@ -215,4 +225,5 @@ def popular_candidaturas_tse(url_download: str = URL_TSE_CANDIDATOS_2026, ano_el
 
 
 if __name__ == "__main__":
-    popular_candidaturas_tse()
+    # Uso: python popular/candidaturaTse.py [caminho/consulta_cand_2026.zip]
+    popular_candidaturas_tse(arquivo_zip=sys.argv[1] if len(sys.argv) > 1 else None)
