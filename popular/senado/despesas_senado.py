@@ -65,7 +65,9 @@ try:
         print(f"[SENADO] Analisando lote de despesas dos senadores...")
         checkpoint_senado_atual = chk_manager.obter(script_senado, default_value="0")
 
-        if ano <= int(checkpoint_senado_atual):
+        # O ano corrente é sempre reprocessado (INSERT IGNORE): as despesas do
+        # ano chegam aos poucos, e pular o ano já visto congelaria a carga.
+        if ano < ANO_ATUAL and ano <= int(checkpoint_senado_atual):
             print(f" [i] Lote anual do Senado para {ano} já foi processado anteriormente nesta execução. Pulando.")
             continue
 

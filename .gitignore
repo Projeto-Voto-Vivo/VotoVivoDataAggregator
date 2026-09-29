@@ -208,3 +208,6 @@ __marimo__/
 
 # Staging do ETL (cache HTTP das respostas brutas das APIs)
 staging/
+
+# Logs da atualização semanal (cron)
+logs/

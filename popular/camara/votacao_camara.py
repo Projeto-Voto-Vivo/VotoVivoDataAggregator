@@ -238,6 +238,11 @@ def importar_votacoes_camara():
             if db.in_transaction: db.commit()
             proximo_mes = num_mes + 1 if num_mes < 12 else 1
             proximo_ano = ano if num_mes < 12 else ano + 1
+            # O mês corrente ainda recebe votações: o cursor para nele, então a
+            # próxima execução reprocessa este mês inteiro (upserts idempotentes)
+            # em vez de pular o que for votado depois de hoje.
+            if (ano, num_mes) == (datetime.now().year, datetime.now().month):
+                proximo_ano, proximo_mes = ano, num_mes
             db.start_transaction()
             chk_manager.salvar(script_camara, f"{proximo_ano}_{proximo_mes}_1")
             db.commit()

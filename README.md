@@ -83,6 +83,20 @@ Para realizar a carga completa e automatizada de todos os dados do projeto (parl
 python popular/principal.py
 ```
 
+## Atualização semanal (cron)
+
+Depois da carga completa, `popular/atualizacao_semanal.py` mantém em dia **despesas, proposições (com ementa), emendas e votações/votos** (Câmara e Senado). Cada script faz o refresh incremental a partir do próprio checkpoint (ano/mês corrente ou ids novos); uma falha não interrompe os demais, mas o processo sai com código 1. Ao fim, purga o CDN.
+
+Agendamento para todo domingo às 03:00 (`crontab -e` no servidor):
+
+```cron
+CRON_TZ=America/Sao_Paulo
+0 3 * * 0  cd /caminho/VotoVivoDataAggregator && flock -n /tmp/votovivo-semanal.lock .venv/bin/python popular/atualizacao_semanal.py >> logs/atualizacao_semanal.log 2>&1
+```
+
+- O `cd` é necessário: o cache HTTP (`staging/`) e o `logs/` são relativos ao diretório do projeto (crie `logs/` antes: `mkdir -p logs`).
+- O `flock -n` impede que uma rodada comece enquanto a anterior ainda estiver rodando.
+
 ## Scripts
 
 | Ordem | Script                                  | Depende de                          | O que faz                                                                                            |
