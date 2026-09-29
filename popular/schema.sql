@@ -68,6 +68,7 @@ CREATE TABLE candidaturaTse (
     siglaPartido VARCHAR(50),
     situacaoCandidatura VARCHAR(100),
     resultadoEleicao VARCHAR(100),
+    fotoUrl VARCHAR(500),
     FOREIGN KEY (idParlamentar)
         REFERENCES parlamentar(idParlamentar)
         ON DELETE CASCADE,

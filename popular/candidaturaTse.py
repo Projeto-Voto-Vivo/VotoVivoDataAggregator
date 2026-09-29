@@ -20,6 +20,14 @@ except ModuleNotFoundError:
     logger = logging.getLogger("candidatura_tse")
 
 URL_TSE_CANDIDATOS_2026 = "https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand/consulta_cand_2026.zip"
+# Foto do candidato no DivulgaCandContas: /img/{CD_ELEICAO}/{SQ_CANDIDATO}/{SG_UF} (SG_UF = "BR" para presidente)
+URL_TSE_FOTO = "https://divulgacandcontas.tse.jus.br/divulga/rest/arquivo/img/{cd_eleicao}/{sq_candidato}/{uf}"
+
+
+def montar_foto_url(cd_eleicao: str, sq_candidato: str, uf: str):
+    if not (cd_eleicao and sq_candidato and uf):
+        return None
+    return URL_TSE_FOTO.format(cd_eleicao=cd_eleicao, sq_candidato=sq_candidato, uf=uf)
 
 
 def normalizar_texto(texto: str) -> str:
@@ -71,8 +79,9 @@ def processar_e_inserir_dataframe(df: pd.DataFrame, mapa_parlamentares: dict, cu
             nomeCivil,
             siglaPartido,
             situacaoCandidatura,
-            resultadoEleicao
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            resultadoEleicao,
+            fotoUrl
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             idParlamentar = VALUES(idParlamentar),
             descricaoEleicao = VALUES(descricaoEleicao),
@@ -82,7 +91,8 @@ def processar_e_inserir_dataframe(df: pd.DataFrame, mapa_parlamentares: dict, cu
             nomeCivil = VALUES(nomeCivil),
             siglaPartido = VALUES(siglaPartido),
             situacaoCandidatura = VALUES(situacaoCandidatura),
-            resultadoEleicao = VALUES(resultadoEleicao);
+            resultadoEleicao = VALUES(resultadoEleicao),
+            fotoUrl = VALUES(fotoUrl);
     """
 
     df = df.fillna("")
@@ -103,6 +113,8 @@ def processar_e_inserir_dataframe(df: pd.DataFrame, mapa_parlamentares: dict, cu
         sigla_partido = str(row.get("SG_PARTIDO", "")).strip().upper()
         situacao = str(row.get("DS_SITUACAO_CANDIDATURA", "")).strip()
         resultado = str(row.get("DS_SIT_TOT_TURNO", "")).strip()
+        cd_eleicao = str(row.get("CD_ELEICAO", "")).strip()
+        foto_url = montar_foto_url(cd_eleicao, sq_candidato, uf)
 
         nm_civil_norm = normalizar_texto(nm_civil)
         nm_urna_norm = normalizar_texto(nm_urna)
@@ -127,7 +139,8 @@ def processar_e_inserir_dataframe(df: pd.DataFrame, mapa_parlamentares: dict, cu
             nm_civil,
             sigla_partido,
             situacao,
-            resultado
+            resultado,
+            foto_url
         ))
 
     if registros:
@@ -169,6 +182,7 @@ def popular_candidaturas_tse(url_download: str = URL_TSE_CANDIDATOS_2026, ano_el
 
         colunas_necessarias = [
             "SQ_CANDIDATO",
+            "CD_ELEICAO",
             "DS_ELEICAO",
             "SG_UF",
             "DS_CARGO",
