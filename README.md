@@ -60,6 +60,8 @@ mysql -u <usuario> -p < popular/migrations/2026-08-21_fontes_substitutas.sql
 mysql -u <usuario> -p < popular/migrations/2026-08-21_blocos.sql
 mysql -u <usuario> -p < popular/migrations/2026-09-26_candidatura_tse.sql
 mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_foto.sql
+mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_foto_fix.sql
+mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_marcadores_tse.sql
 ```
 
 ### Banco de testes
