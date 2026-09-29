@@ -20,14 +20,21 @@ except ModuleNotFoundError:
     logger = logging.getLogger("candidatura_tse")
 
 URL_TSE_CANDIDATOS_2026 = "https://cdn.tse.jus.br/estatistica/sead/odsele/consulta_cand/consulta_cand_2026.zip"
-# Foto do candidato no DivulgaCandContas: /img/{CD_ELEICAO}/{SQ_CANDIDATO}/{SG_UF} (SG_UF = "BR" para presidente)
-URL_TSE_FOTO = "https://divulgacandcontas.tse.jus.br/divulga/rest/arquivo/img/{cd_eleicao}/{sq_candidato}/{uf}"
+# Foto do candidato no DivulgaCandContas: /img/{ID_ELEICAO_DIVULGA}/{SQ_CANDIDATO}/{SG_UF} (SG_UF = "BR" para presidente)
+URL_TSE_FOTO = "https://divulgacandcontas.tse.jus.br/divulga/rest/arquivo/img/{id_eleicao}/{sq_candidato}/{uf}"
+# O id da eleicao no DivulgaCandContas NAO e o CD_ELEICAO do CSV (ex.: 6259 aponta para outra eleicao).
+# E um id proprio do sistema, unico para a eleicao geral (federal + estadual) do ano.
+ID_ELEICAO_DIVULGA = {
+    2022: "2040602022",
+    2026: "20322002026",
+}
 
 
-def montar_foto_url(cd_eleicao: str, sq_candidato: str, uf: str):
-    if not (cd_eleicao and sq_candidato and uf):
+def montar_foto_url(ano_eleicao: int, sq_candidato: str, uf: str):
+    id_eleicao = ID_ELEICAO_DIVULGA.get(ano_eleicao)
+    if not (id_eleicao and sq_candidato and uf):
         return None
-    return URL_TSE_FOTO.format(cd_eleicao=cd_eleicao, sq_candidato=sq_candidato, uf=uf)
+    return URL_TSE_FOTO.format(id_eleicao=id_eleicao, sq_candidato=sq_candidato, uf=uf)
 
 
 def normalizar_texto(texto: str) -> str:
@@ -113,8 +120,7 @@ def processar_e_inserir_dataframe(df: pd.DataFrame, mapa_parlamentares: dict, cu
         sigla_partido = str(row.get("SG_PARTIDO", "")).strip().upper()
         situacao = str(row.get("DS_SITUACAO_CANDIDATURA", "")).strip()
         resultado = str(row.get("DS_SIT_TOT_TURNO", "")).strip()
-        cd_eleicao = str(row.get("CD_ELEICAO", "")).strip()
-        foto_url = montar_foto_url(cd_eleicao, sq_candidato, uf)
+        foto_url = montar_foto_url(ano_eleicao, sq_candidato, uf)
 
         nm_civil_norm = normalizar_texto(nm_civil)
         nm_urna_norm = normalizar_texto(nm_urna)
@@ -182,7 +188,6 @@ def popular_candidaturas_tse(url_download: str = URL_TSE_CANDIDATOS_2026, ano_el
 
         colunas_necessarias = [
             "SQ_CANDIDATO",
-            "CD_ELEICAO",
             "DS_ELEICAO",
             "SG_UF",
             "DS_CARGO",
