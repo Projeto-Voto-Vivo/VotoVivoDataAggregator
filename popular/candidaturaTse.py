@@ -141,7 +141,8 @@ def processar_e_inserir_dataframe(df: pd.DataFrame, mapa_parlamentares: dict, si
             nomeCivil = VALUES(nomeCivil),
             siglaPartido = VALUES(siglaPartido),
             situacaoCandidatura = VALUES(situacaoCandidatura),
-            resultadoEleicao = VALUES(resultadoEleicao),
+            -- O CSV pode vir sem o resultado; nao apaga o gravado por resultadoEleicao.py
+            resultadoEleicao = COALESCE(VALUES(resultadoEleicao), resultadoEleicao),
             fotoUrl = VALUES(fotoUrl);
     """
 

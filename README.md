@@ -63,6 +63,7 @@ mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_foto.sql
 mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_foto_fix.sql
 mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_marcadores_tse.sql
 mysql -u <usuario> -p < popular/migrations/2026-10-05_indices.sql
+mysql -u <usuario> -p < popular/migrations/2026-10-06_resultado_eleicao.sql
 ```
 
 ### Banco de testes
@@ -138,6 +139,17 @@ Cada script pode ser executado individualmente:
 ```bash
 python popular/camara/parlamentar_camara.py
 ```
+
+### Resultados da eleição (TSE)
+
+Fora do pipeline, rodado sob demanda:
+
+```bash
+python popular/resultadoEleicao.py              # eleição de 2026
+python popular/resultadoEleicao.py --sem-banco  # só baixa e mostra o resumo, sem gravar
+```
+
+Lê a totalização oficial do TSE (os arquivos do site de resultados) e grava `eleicaoResultado` (comparecimento, abstenção, válidos/brancos/nulos, seções totalizadas, 2º turno), `eleicaoResultadoCandidato` (votos, percentual dos válidos, colocação e situação de cada candidato) e `eleicaoResultadoPartido` (cadeiras e votos por partido), além de repassar a situação final para `candidaturaTse.resultadoEleicao`. É um refresh completo: pode ser reexecutado à vontade, e o 2º turno entra sozinho quando o TSE publicar os arquivos. Rode `candidaturaTse.py` antes para que os candidatos fiquem vinculados.
 
 ## Infraestrutura compartilhada (`utils/`)
 
@@ -220,3 +232,4 @@ Os scripts de maior volume (tramitações, votos, detalhes de votações e de pr
 - **Câmara dos Deputados** — [dadosabertos.camara.leg.br](https://dadosabertos.camara.leg.br)
 - **Senado Federal** — [legis.senado.leg.br/dadosabertos](https://legis.senado.leg.br/dadosabertos)
 - **Portal da Transparência** — [api.portaldatransparencia.gov.br](https://api.portaldatransparencia.gov.br)
+- **TSE** — candidaturas em [dadosabertos.tse.jus.br](https://dadosabertos.tse.jus.br) e resultados em [resultados.tse.jus.br](https://resultados.tse.jus.br)
