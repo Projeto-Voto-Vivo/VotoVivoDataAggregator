@@ -51,7 +51,10 @@ CREATE TABLE parlamentar (
     email VARCHAR(255),
     telefone VARCHAR(20),
     enderecoGabinete VARCHAR(500),
-    condicao_mandato VARCHAR(50) DEFAULT 'Titular'
+    condicao_mandato VARCHAR(50) DEFAULT 'Titular',
+    INDEX idx_parlamentar_cargo_nome (cargo, nomeUrna),
+    INDEX idx_parlamentar_partido (partidoAtual),
+    INDEX idx_parlamentar_uf (uf)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE candidaturaTse (
@@ -74,7 +77,10 @@ CREATE TABLE candidaturaTse (
         ON DELETE CASCADE,
     UNIQUE KEY unique_candidatura_ano_sq (anoEleicao, sqCandidato),
     INDEX idx_candidatura_parlamentar (idParlamentar),
-    INDEX idx_candidatura_ano (anoEleicao)
+    INDEX idx_candidatura_ano (anoEleicao),
+    INDEX idx_candidatura_nome_urna (nomeUrna),
+    INDEX idx_candidatura_ano_uf_cargo (anoEleicao, uf, cargo),
+    INDEX idx_candidatura_partido (siglaPartido)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE partido (
@@ -151,7 +157,11 @@ CREATE TABLE proposicao (
     dataApresentacao DATETIME NULL,
     FOREIGN KEY (idTipoProposicao)
         REFERENCES tipoProposicao(idTipoProposicao)
-        ON DELETE SET NULL
+        ON DELETE SET NULL,
+    INDEX idx_proposicao_ano (ano),
+    INDEX idx_proposicao_casa_ano (casa, ano),
+    INDEX idx_proposicao_tipo_ano (idTipoProposicao, ano),
+    INDEX idx_proposicao_status (statusAtual)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE tema (
@@ -181,7 +191,9 @@ CREATE TABLE orgao (
     nome VARCHAR(1000),
     casa ENUM('Camara', 'Senado', 'Congresso') NOT NULL,
     tipoOrgao VARCHAR(100) NULL,
-    UNIQUE KEY unique_orgao_api (idApi, casa)
+    UNIQUE KEY unique_orgao_api (idApi, casa),
+    INDEX idx_orgao_sigla (sigla),
+    INDEX idx_orgao_nome (nome(191))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE membroOrgao (
@@ -227,7 +239,8 @@ CREATE TABLE votacao (
         ON DELETE SET NULL,
     FOREIGN KEY (idEvento) 
         REFERENCES evento(idEvento) 
-        ON DELETE SET NULL
+        ON DELETE SET NULL,
+    INDEX idx_votacao_data (dataHora)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Orientação das bancadas/lideranças em cada votação da Câmara (fonte: dump
@@ -244,7 +257,8 @@ CREATE TABLE orientacaoVotacao (
     siglaPartido VARCHAR(50) NULL,
     FOREIGN KEY (idVotacao) REFERENCES votacao(idVotacao) ON DELETE CASCADE,
     FOREIGN KEY (idBloco) REFERENCES bloco(idBloco) ON DELETE SET NULL,
-    UNIQUE KEY unique_orientacao_votacao (idVotacao, siglaBancada)
+    UNIQUE KEY unique_orientacao_votacao (idVotacao, siglaBancada),
+    INDEX idx_orientacao_bancada (siglaBancada)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE voto (
@@ -258,7 +272,9 @@ CREATE TABLE voto (
         ON DELETE CASCADE,
     FOREIGN KEY (idVotacao)
         REFERENCES votacao(idVotacao)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+    INDEX idx_voto_parlamentar_voto (idParlamentar, votoRegistrado, idVotacao),
+    INDEX idx_voto_votacao_voto (idVotacao, votoRegistrado)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE autoriaProposicao (
@@ -311,7 +327,8 @@ CREATE TABLE despesa (
         ON DELETE CASCADE,
     UNIQUE KEY unique_despesa_api (idApi),
     INDEX idx_despesa_parlamentar (idParlamentar),
-    INDEX idx_despesa_data (dataDespesa)
+    INDEX idx_despesa_data (dataDespesa),
+    INDEX idx_despesa_parlamentar_data (idParlamentar, dataDespesa)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE tipoTramitacao (
@@ -333,7 +350,9 @@ CREATE TABLE tramitacao (
     descricaoSituacao VARCHAR(255),
     despacho TEXT,
     CONSTRAINT unique_tramitacao UNIQUE (idApi, sequencia),
-    CONSTRAINT fk_tramitacao_proposicao FOREIGN KEY (idProposicao) REFERENCES proposicao(idProposicao) ON DELETE CASCADE
+    CONSTRAINT fk_tramitacao_proposicao FOREIGN KEY (idProposicao) REFERENCES proposicao(idProposicao) ON DELETE CASCADE,
+    INDEX idx_tramitacao_proposicao_seq (idProposicao, sequencia, dataHora),
+    INDEX idx_tramitacao_orgao (idOrgao)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE presenca (
@@ -367,7 +386,9 @@ CREATE TABLE emenda (
     INDEX idx_emenda_codigo (codigoEmenda),
     INDEX idx_emenda_ano (ano),
     INDEX idx_emenda_autor (autor),
-    INDEX idx_emenda_tipo (tipoEmenda)
+    INDEX idx_emenda_tipo (tipoEmenda),
+    INDEX idx_emenda_funcao (funcao),
+    INDEX idx_emenda_localidade (localidadeDoGasto)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE emendaDocumento (

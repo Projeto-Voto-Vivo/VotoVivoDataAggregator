@@ -62,6 +62,7 @@ mysql -u <usuario> -p < popular/migrations/2026-09-26_candidatura_tse.sql
 mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_foto.sql
 mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_foto_fix.sql
 mysql -u <usuario> -p < popular/migrations/2026-09-28_candidatura_marcadores_tse.sql
+mysql -u <usuario> -p < popular/migrations/2026-10-05_indices.sql
 ```
 
 ### Banco de testes
